@@ -1,0 +1,12 @@
+--- a/geomag_visualizer.js
++++ b/geomag_visualizer.js
+@@ -201,6 +201,9 @@
+             .attr("startOffset", "50%").style("text-anchor", "middle").style("fill", "black").style("font-size", "9px")
+             .style("paint-order", "stroke").style("stroke", "white").style("stroke-width", "2.5px").style("stroke-linejoin", "round")
+             .text(d => d.value.toLocaleString());
++
++        // Explicitly bring the entire contour group to the front to ensure it's on top of the land.
++        contourGroup.raise();
+     },
+
+     addLegend: function(svgId) {
