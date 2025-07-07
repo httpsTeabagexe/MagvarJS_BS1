@@ -1,4 +1,4 @@
-    /****************************************************************************/
+/****************************************************************************/
     /*                                                                          */
     /*      NGDC's Geomagnetic Field Modeling software for the IGRF and WMM     */
     /*      Translated to JavaScript by an AI assistant for Node.js execution.  */
@@ -8,9 +8,9 @@
     /*      Original C Version 7.0 by Stefan Maus, Jan-25-2010                  */
     /****************************************************************************/
 
-    const fs = require('fs');
-    // Для интерактивного ввода используется prompt-sync. Установите через: npm install prompt-sync
-    const prompt = require('prompt-sync')({ sigint: true });
+    // Remove Node.js requires for browser
+    // const fs = require('fs');
+    // const prompt = require('prompt-sync')({ sigint: true });
 
     // --- Константы, перенесенные из C ---
     const FT2KM = 1.0 / 0.0003048;   // Conversion factor: feet to kilometers
@@ -1021,5 +1021,8 @@
     if (typeof window !== 'undefined') {
         window.Geomag = Geomag;
     }
+    // Only run main() in Node.js, not in browser
+    if (typeof window === 'undefined') {
+        main();
+    }
 
-main();

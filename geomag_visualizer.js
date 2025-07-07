@@ -1,8 +1,5 @@
 // geomag_visualizer.js
 // Main application for visualizing geomagnetic data on a world map using D3.js and TopoJSON
-import topojson from 'topojson-client'; // For working with TopoJSON data
-import * as d3 from 'd3'; // D3.js for rendering and manipulating SVG
-import { Geomag } from './geomag.js'; // Geomag model for field calculations
 
 
 const MagMapApp = {
@@ -32,8 +29,8 @@ const MagMapApp = {
 
     // --- UI and Event Handling ---
     setupUIListeners: function() {
-        // Attach click handler to render button
         document.getElementById('renderButton').addEventListener('click', () => this.handleRenderClick());
+        document.getElementById('fieldSelect').addEventListener('change', () => this.handleRenderClick());
     },
 
     updateStatus: function(message, isError = false) {
@@ -82,33 +79,30 @@ const MagMapApp = {
 
         const currentEpoch = parseFloat(document.getElementById('epochInput').value);
         const currentAltitude = parseFloat(document.getElementById('altitudeInput').value);
-        const decStep = parseFloat(document.getElementById('decStepInput').value);
-        const incStep = parseFloat(document.getElementById('incStepInput').value);
-        const fStep = parseFloat(document.getElementById('fStepInput').value);
-
-        if (isNaN(currentEpoch) || isNaN(currentAltitude) || isNaN(decStep) || isNaN(incStep) || isNaN(fStep) || decStep <= 0 || incStep <= 0 || fStep <= 0) {
+        const gridStep = parseFloat(document.getElementById('gridStepInput').value);
+        const field = document.getElementById('fieldSelect').value;
+        if (isNaN(currentEpoch) || isNaN(currentAltitude) || isNaN(gridStep) || gridStep <= 0) {
             this.updateStatus('Error: Invalid input. All values must be positive numbers (steps > 0).', true);
             return;
         }
 
-        this.updateStatus(`Rendering for Epoch: ${currentEpoch.toFixed(2)}...`, false);
+        this.config.gridResolutionLat = Math.floor(180 / gridStep) + 1;
+        this.config.gridResolutionLon = Math.floor(360 / gridStep) + 1;
+
+        this.updateStatus(`Rendering ${field.charAt(0).toUpperCase() + field.slice(1)} for Epoch: ${currentEpoch.toFixed(2)}...`, false);
 
         try {
-            await this.renderGeomagneticMaps(
-                'declination-map', 'inclination-map', 'totalfield-map',
-                this.geomagInstance, currentEpoch, currentAltitude,
-                { decStep, incStep, fStep }
-            );
-            this.updateStatus(`Maps rendered for Epoch: ${currentEpoch.toFixed(2)}.`, false);
+            await this.renderGeomagMap('geomag-map', this.geomagInstance, currentEpoch, currentAltitude, field);
+            this.updateStatus(`Map rendered for Epoch: ${currentEpoch.toFixed(2)}.`, false);
         } catch (error) {
-            console.error('Failed to render maps:', error);
-            this.updateStatus(`Error rendering maps: ${error.message}`, true);
+            console.error('Failed to render map:', error);
+            this.updateStatus(`Error rendering map: ${error.message}`, true);
         }
     },
 
     // --- Visualization and Data Generation ---
 
-    renderGeomagneticMaps: async function(declinationSvgId, inclinationSvgId, totalFieldSvgId, geomagInstance, currentEpoch, currentAltitude, steps) {
+    renderGeomagMap: async function(svgId, geomagInstance, currentEpoch, currentAltitude, field) {
         let world = await d3.json(this.config.worldAtlasURL).catch(e => console.error("Failed to fetch world map data:", e));
         if (!world) return;
         const land = topojson.feature(world, world.objects.countries);
@@ -116,21 +110,49 @@ const MagMapApp = {
         const dipPoles = await this.calculateDipPoles(geomagInstance, currentEpoch, currentAltitude);
         const commonArgs = { geomagInstance, epoch: currentEpoch, altitudeKm: currentAltitude };
 
-        // --- **DECLINATION MAP (FIXED MULTI-PASS)** ---
-        const decData = this.generateGridData(commonArgs, 'd_deg');
-        this.drawDeclinationMap(declinationSvgId, decData, land, sphere, dipPoles, `Declination (D) degrees - Epoch ${currentEpoch.toFixed(2)}`, steps.decStep);
-
-        // --- INCLINATION MAP ---
-        const incData = this.generateGridData(commonArgs, 'i_deg');
-        this.drawMap(inclinationSvgId, incData, land, sphere, `Inclination (I) degrees - Epoch ${currentEpoch.toFixed(2)}`, {
-            step: steps.incStep, domain: [-90, 90], colorFunc: (d) => d === 0 ? 'green' : (d > 0 ? '#C00000' : '#0000A0'), majorMultiplier: 2, labelCondition: (v, s, m) => v === 0 || Math.abs(v) % (s * m) === 0, dipPoles: dipPoles
-        });
-
-        // --- TOTAL FIELD MAP ---
-        const fData = this.generateGridData(commonArgs, 'f');
-        this.drawMap(totalFieldSvgId, fData, land, sphere, `Total Field (F) nT - Epoch ${currentEpoch.toFixed(2)}`, {
-            step: steps.fStep, domain: [20000, 66000], colorFunc: () => '#A52A2A', majorMultiplier: 5, labelCondition: (v, s, m) => v % (s * m) === 0, dipPoles: dipPoles
-        });
+        let paramKey, title, step, domain, colorFunc, majorMultiplier, labelCondition, legend;
+        if (field === 'declination') {
+            paramKey = 'd_deg';
+            title = `Declination (D) degrees - Epoch ${currentEpoch.toFixed(2)}`;
+            step = 10;
+            domain = [-180, 180];
+            colorFunc = d => d === 0 ? 'green' : (d > 0 ? '#C00000' : '#0000A0');
+            majorMultiplier = 2;
+            labelCondition = (v, s, m) => v === 0 || Math.abs(v) % (s * m) === 0;
+            legend = [
+                { color: "#C00000", text: "Declination East (+)" },
+                { color: "#0000A0", text: "Declination West (-)" },
+                { color: "green", text: "Zero Declination (Agonic)" }
+            ];
+        } else if (field === 'inclination') {
+            paramKey = 'i_deg';
+            title = `Inclination (I) degrees - Epoch ${currentEpoch.toFixed(2)}`;
+            step = 10;
+            domain = [-90, 90];
+            colorFunc = d => d === 0 ? 'green' : (d > 0 ? '#C00000' : '#0000A0');
+            majorMultiplier = 2;
+            labelCondition = (v, s, m) => v === 0 || Math.abs(v) % (s * m) === 0;
+            legend = [
+                { color: "#C00000", text: "Inclination Down (+)" },
+                { color: "#0000A0", text: "Inclination Up (-)" },
+                { color: "green", text: "Zero Inclination (Equator)" }
+            ];
+        } else {
+            paramKey = 'f';
+            title = `Total Field (F) nT - Epoch ${currentEpoch.toFixed(2)}`;
+            step = 1000;
+            domain = [20000, 66000];
+            colorFunc = () => '#A52A2A';
+            majorMultiplier = 5;
+            labelCondition = (v, s, m) => v % (s * m) === 0;
+            legend = [
+                { color: "#A52A2A", text: "Total Intensity (F)" }
+            ];
+        }
+        const gridData = this.generateGridData(commonArgs, paramKey);
+        const projection = this.drawBaseMap(svgId, land, sphere, title, dipPoles);
+        this.drawContourLayer(svgId, projection, gridData, { step, domain, colorFunc, majorMultiplier, labelCondition });
+        this.addLegend(svgId, legend);
     },
 
     // A dedicated function to handle the multi-part drawing for Declination
@@ -243,14 +265,10 @@ const MagMapApp = {
         contourGroup.raise();
     },
 
-    addLegend: function(svgId) {
+    addLegend: function(svgId, legendItems) {
         const { mapHeight } = this.config;
-        const legendItems = [
-            { color: "#C00000", text: "Declination East (+)" },
-            { color: "#0000A0", text: "Declination West (-)" },
-            { color: "green", text: "Zero Declination (Agonic)" }
-        ];
         const svg = d3.select(`#${svgId}`);
+        svg.selectAll("g.legend").remove();
         const legendGroup = svg.append("g").attr("class", "legend").attr("transform", `translate(30, ${mapHeight - 80})`);
         legendItems.forEach((item, i) => {
             const legendRow = legendGroup.append("g").attr("transform", `translate(0, ${i * 20})`);
