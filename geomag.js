@@ -8,9 +8,9 @@
     /*      Original C Version 7.0 by Stefan Maus, Jan-25-2010                  */
     /****************************************************************************/
 
-    // const fs = require('fs');
+    const fs = require('fs');
     // Для интерактивного ввода используется prompt-sync. Установите через: npm install prompt-sync
-    // const prompt = require('prompt-sync')({ sigint: true });
+    const prompt = require('prompt-sync')({ sigint: true });
 
     // --- Константы, перенесенные из C ---
     const FT2KM = 1.0 / 0.0003048;   // Conversion factor: feet to kilometers
@@ -31,7 +31,7 @@
             this.gha = new Array(MAXCOEFF).fill(0);
             this.ghb = new Array(MAXCOEFF).fill(0);
             this.d = 0; this.f = 0; this.h = 0; this.i = 0;
-            this.dtemp = 0; this.ftemp = 0; this.htemp = 0; this.itemp = 0;
+            this.dtemp = 1; this.ftemp = 0; this.htemp = 0; this.itemp = 0;
             this.x = 0; this.y = 0; this.z = 0;
             this.xtemp = 0; this.ytemp = 0; this.ztemp = 0;
             this.epoch = new Array(MAXMOD).fill(0);
@@ -1022,3 +1022,4 @@
         window.Geomag = Geomag;
     }
 
+main();

@@ -1,27 +1,29 @@
 // geomag_visualizer.js
-/**
- * Visualizes geomagnetic field data.
- * This version contains the final fix for declination rendering logic.
- */
+// Main application for visualizing geomagnetic data on a world map using D3.js and TopoJSON
+import topojson from 'topojson-client'; // For working with TopoJSON data
+import * as d3 from 'd3'; // D3.js for rendering and manipulating SVG
+import { Geomag } from './geomag.js'; // Geomag model for field calculations
+
 
 const MagMapApp = {
     // --- Configuration ---
     config: {
-        igdgc: 1,
-        mapWidth: 960,
-        mapHeight: 550,
-        gridResolutionLat: 90,
-        gridResolutionLon: 180,
-        worldAtlasURL: './data/countries-110m.json',
-        cofURL: './data/IGRF14.COF'
+        igdgc: 1, // Geodetic coordinate system flag
+        mapWidth: 960, // Width of the SVG map
+        mapHeight: 550, // Height of the SVG map
+        gridResolutionLat: 90, // Number of latitude grid points
+        gridResolutionLon: 180, // Number of longitude grid points
+        worldAtlasURL: './data/countries-110m.json', // Path to world map TopoJSON
+        cofURL: './data/IGRF14.COF' // Path to IGRF coefficient file
     },
 
     // --- Application State ---
-    geomagInstance: null,
-    cofFileContentCache: null,
+    geomagInstance: null, // Instance of Geomag class
+    cofFileContentCache: null, // Cached content of COF file
 
     // --- Main Initializer ---
     init: function() {
+        // Wait for DOM to load, then set up UI and initialize geomag
         document.addEventListener('DOMContentLoaded', () => {
             this.setupUIListeners();
             this.initializeGeomag();
@@ -30,6 +32,7 @@ const MagMapApp = {
 
     // --- UI and Event Handling ---
     setupUIListeners: function() {
+        // Attach click handler to render button
         document.getElementById('renderButton').addEventListener('click', () => this.handleRenderClick());
     },
 
@@ -310,22 +313,49 @@ function generateGridData(commonArgs, paramKey) {
     const { geomagInstance, epoch, altitudeKm } = commonArgs;
     const { igdgc, gridResolutionLat, gridResolutionLon } = MagMapApp.config;
 
-    // Create a grid that is one column wider to stitch the dateline
-    const width = gridResolutionLon + 1;
-    const height = gridResolutionLat;
-    const values = new Float32Array(width * height);
+    // Use a coarser grid for calculation, then interpolate
+    const coarseFactor = 4; // 4x coarser grid
+    const coarseLat = Math.ceil(gridResolutionLat / coarseFactor);
+    const coarseLon = Math.ceil(gridResolutionLon / coarseFactor);
+    const coarseWidth = coarseLon + 1;
+    const coarseHeight = coarseLat;
+    const coarseValues = new Float32Array(coarseWidth * coarseHeight);
 
-    const lats = d3.range(90, -90 - 1e-9, -180 / (height - 1));
-    // Generate longitudes from -180 to +180 (inclusive) to stitch the grid
-    const lons = d3.range(-180, 180 + 1e-9, 360 / gridResolutionLon);
+    const lats = d3.range(90, -90 - 1e-9, -180 / (coarseHeight - 1));
+    const lons = d3.range(-180, 180 + 1e-9, 360 / coarseLon);
 
-    for (let i = 0; i < height; i++) {
-        for (let j = 0; j < width; j++) {
+    for (let i = 0; i < coarseHeight; i++) {
+        for (let j = 0; j < coarseWidth; j++) {
             const pointGeomag = new Geomag();
             pointGeomag.modelData = geomagInstance.modelData;
             Object.assign(pointGeomag, { model: geomagInstance.model.slice(), nmodel: geomagInstance.nmodel, epoch: geomagInstance.epoch.slice(), yrmin: geomagInstance.yrmin.slice(), yrmax: geomagInstance.yrmax.slice(), altmin: geomagInstance.altmin.slice(), altmax: geomagInstance.altmax.slice(), max1: geomagInstance.max1.slice(), max2: geomagInstance.max2.slice(), max3: geomagInstance.max3.slice(), irec_pos: geomagInstance.irec_pos.slice() });
             const field = pointGeomag.getFieldComponents(epoch, igdgc, altitudeKm, lats[i], lons[j]);
-            values[i * width + j] = field[paramKey];
+            coarseValues[i * coarseWidth + j] = field[paramKey];
+        }
+    }
+
+    // Interpolate to fine grid
+    const width = gridResolutionLon + 1;
+    const height = gridResolutionLat;
+    const values = new Float32Array(width * height);
+    for (let i = 0; i < height; i++) {
+        for (let j = 0; j < width; j++) {
+            // Map fine grid indices to coarse grid space
+            const y = (i / (height - 1)) * (coarseHeight - 1);
+            const x = (j / (width - 1)) * (coarseWidth - 1);
+            const y0 = Math.floor(y), y1 = Math.min(y0 + 1, coarseHeight - 1);
+            const x0 = Math.floor(x), x1 = Math.min(x0 + 1, coarseWidth - 1);
+            const q11 = coarseValues[y0 * coarseWidth + x0];
+            const q21 = coarseValues[y0 * coarseWidth + x1];
+            const q12 = coarseValues[y1 * coarseWidth + x0];
+            const q22 = coarseValues[y1 * coarseWidth + x1];
+            const fy = y - y0, fx = x - x0;
+            // Bilinear interpolation
+            values[i * width + j] =
+                q11 * (1 - fx) * (1 - fy) +
+                q21 * fx * (1 - fy) +
+                q12 * (1 - fx) * fy +
+                q22 * fx * fy;
         }
     }
     return { values, width, height };
