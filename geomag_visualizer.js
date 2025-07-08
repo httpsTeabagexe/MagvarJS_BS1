@@ -1,6 +1,8 @@
 // geomag_visualizer.js
 // Main application for visualizing geomagnetic data on a world map using D3.js and TopoJSON
 
+        // gridResolutionLon: 360, // Number of longitude grid points
+        // gridResolutionLat: 180, // Number of latitude grid points
 
 const MagMapApp = {
     // --- Configuration ---
@@ -20,7 +22,6 @@ const MagMapApp = {
 
     // --- Main Initializer ---
     init: function() {
-        // Wait for DOM to load, then set up UI and initialize geomag
         document.addEventListener('DOMContentLoaded', () => {
             this.setupUIListeners();
             this.initializeGeomag();
@@ -100,91 +101,76 @@ const MagMapApp = {
         }
     },
 
-    // --- Visualization and Data Generation ---
-
     renderGeomagMap: async function(svgId, geomagInstance, currentEpoch, currentAltitude, field) {
-        let world = await d3.json(this.config.worldAtlasURL).catch(e => console.error("Failed to fetch world map data:", e));
+        const world = await d3.json(this.config.worldAtlasURL).catch(e => console.error("Failed to fetch world map data:", e));
         if (!world) return;
         const land = topojson.feature(world, world.objects.countries);
         const sphere = {type: "Sphere"};
         const dipPoles = await this.calculateDipPoles(geomagInstance, currentEpoch, currentAltitude);
         const commonArgs = { geomagInstance, epoch: currentEpoch, altitudeKm: currentAltitude };
 
-        let paramKey, title, step, domain, colorFunc, majorMultiplier, labelCondition, legend;
+        let paramKey, title, legend;
+        let positiveOptions, negativeOptions, zeroOptions;
+
         if (field === 'declination') {
             paramKey = 'd_deg';
             title = `Declination (D) degrees - Epoch ${currentEpoch.toFixed(2)}`;
-            step = 10;
-            domain = [-180, 180];
-            colorFunc = d => d === 0 ? 'green' : (d > 0 ? '#C00000' : '#0000A0');
-            majorMultiplier = 2;
-            labelCondition = (v, s, m) => v === 0 || Math.abs(v) % (s * m) === 0;
+            const step = 10;
+            const colorFunc = d => d === 0 ? 'green' : (d > 0 ? '#C00000' : '#0000A0');
+            const majorMultiplier = 2;
+            const labelCondition = (v, s, m) => v === 0 || Math.abs(v) % (s * m) === 0;
             legend = [
                 { color: "#C00000", text: "Declination East (+)" },
                 { color: "#0000A0", text: "Declination West (-)" },
                 { color: "green", text: "Zero Declination (Agonic)" }
             ];
+            positiveOptions = { step, domain: [step, 180], colorFunc, majorMultiplier, labelCondition };
+            negativeOptions = { step, domain: [-180, -step], colorFunc, majorMultiplier, labelCondition };
+            zeroOptions = { step: 1, domain: [0, 0], colorFunc, majorMultiplier: 1, labelCondition };
         } else if (field === 'inclination') {
             paramKey = 'i_deg';
             title = `Inclination (I) degrees - Epoch ${currentEpoch.toFixed(2)}`;
-            step = 10;
-            domain = [-90, 90];
-            colorFunc = d => d === 0 ? 'green' : (d > 0 ? '#C00000' : '#0000A0');
-            majorMultiplier = 2;
-            labelCondition = (v, s, m) => v === 0 || Math.abs(v) % (s * m) === 0;
+            const step = 10;
+            const colorFunc = d => d === 0 ? 'green' : (d > 0 ? '#C00000' : '#0000A0');
+            const majorMultiplier = 2;
+            const labelCondition = (v, s, m) => v === 0 || Math.abs(v) % (s * m) === 0;
             legend = [
                 { color: "#C00000", text: "Inclination Down (+)" },
                 { color: "#0000A0", text: "Inclination Up (-)" },
                 { color: "green", text: "Zero Inclination (Equator)" }
             ];
-        } else {
+            positiveOptions = { step, domain: [step, 90], colorFunc, majorMultiplier, labelCondition };
+            negativeOptions = { step, domain: [-90, -step], colorFunc, majorMultiplier, labelCondition };
+            zeroOptions = { step: 1, domain: [0, 0], colorFunc, majorMultiplier: 1, labelCondition };
+        } else { // Total Field
             paramKey = 'f';
             title = `Total Field (F) nT - Epoch ${currentEpoch.toFixed(2)}`;
-            step = 1000;
-            domain = [20000, 66000];
-            colorFunc = () => '#A52A2A';
-            majorMultiplier = 5;
-            labelCondition = (v, s, m) => v % (s * m) === 0;
-            legend = [
-                { color: "#A52A2A", text: "Total Intensity (F)" }
-            ];
+            const step = 2000;
+            const colorFunc = () => '#A52A2A';
+            const majorMultiplier = 5;
+            const labelCondition = (v, s, m) => v % (s * m) === 0;
+            legend = [ { color: "#A52A2A", text: "Total Intensity (F)" } ];
+            positiveOptions = { step, domain: [20000, 66000], colorFunc, majorMultiplier, labelCondition };
+            negativeOptions = { step, domain: [0, -1], colorFunc, majorMultiplier, labelCondition };
+            zeroOptions = { step: 1, domain: [-1, -1], colorFunc, majorMultiplier, labelCondition };
         }
+
+        const { pathGenerator, clippedGroup } = this.drawBaseMap(svgId, land, sphere, title, dipPoles);
         const gridData = this.generateGridData(commonArgs, paramKey);
-        const projection = this.drawBaseMap(svgId, land, sphere, title, dipPoles);
-        this.drawContourLayer(svgId, projection, gridData, { step, domain, colorFunc, majorMultiplier, labelCondition });
+
+        // --- ARTIFACT FIX: Apply a Gaussian blur to smooth the data grid ---
+        this.applyGaussianBlur(gridData.values, gridData.width, gridData.height, 1.5);
+
+        const passes = [positiveOptions, negativeOptions, zeroOptions];
+        for (const options of passes) {
+            if (options.domain[0] <= options.domain[1]) {
+                this.drawContourLayer(clippedGroup, pathGenerator, gridData, options);
+            }
+        }
+
         this.addLegend(svgId, legend);
     },
 
-    // A dedicated function to handle the multi-part drawing for Declination
-    drawDeclinationMap: function(svgId, decData, land, sphere, dipPoles, title, step) {
-        // --- 1. Draw the base map (land, graticules, title, poles) and get the projection ---
-        const projection = this.drawBaseMap(svgId, land, sphere, title, dipPoles);
-
-        // --- 2. Define options for each contour set ---
-        const colorFunc = (d) => d === 0 ? 'green' : (d > 0 ? '#C00000' : '#0000A0');
-        const labelCondition = (v, s, m) => v === 0 || Math.abs(v) % (s * m) === 0;
-        const majorMultiplier = 2;
-
-        const positiveOptions = { step, domain: [step, 180], colorFunc, majorMultiplier, labelCondition };
-        const negativeOptions = { step, domain: [-180, -step], colorFunc, majorMultiplier, labelCondition };
-        const zeroOptions = { step: 1, domain: [0, 0], colorFunc, majorMultiplier: 1, labelCondition };
-
-        // --- 3. Draw each set of contours onto the existing SVG ---
-        this.drawContourLayer(svgId, projection, decData, positiveOptions);
-        this.drawContourLayer(svgId, projection, decData, negativeOptions);
-        this.drawContourLayer(svgId, projection, decData, zeroOptions);
-
-        // --- 4. Add the legend ---
-        this.addLegend(svgId);
-    },
-
-    // Generic drawMap for continuous data like Inclination and Total Field
-    drawMap: function(svgId, gridData, landFeatures, sphereFeature, title, options) {
-        const projection = this.drawBaseMap(svgId, landFeatures, sphereFeature, title, options.dipPoles);
-        this.drawContourLayer(svgId, projection, gridData, options);
-    },
-
-    // NEW helper to draw only the base map and return the configured projection
     drawBaseMap: function(svgId, landFeatures, sphereFeature, title, dipPoles) {
         const { mapWidth, mapHeight } = this.config;
         const svg = d3.select(`#${svgId}`);
@@ -198,15 +184,35 @@ const MagMapApp = {
         const projection = d3.geoMiller().fitSize([mapWidth - padding, mapHeight - padding], sphereFeature);
         const pathGenerator = d3.geoPath(projection);
 
-        this.drawGraticuleWithLabels(svg, projection);
+        const clipPathId = `${svgId}-clip-path`;
+        svg.append("defs").append("clipPath")
+            .attr("id", clipPathId)
+            .append("path")
+            .datum(sphereFeature)
+            .attr("d", pathGenerator);
 
-        svg.append("path").datum(landFeatures).attr("d", pathGenerator)
-           .style("fill", "black").style("stroke", "#336633").style("stroke-width", 0.5);
+        const clippedGroup = svg.append("g")
+            .attr("id", `${svgId}-clipped-group`) // Give the group an ID
+            .attr("clip-path", `url(#${clipPathId})`);
 
-        svg.append("path").datum(sphereFeature).attr("d", pathGenerator)
-            .style("fill", "none").style("stroke", "#333").style("stroke-width", 1);
+        this.drawGraticules(clippedGroup, svg, projection, pathGenerator);
 
-        svg.append("text").attr("x", mapWidth / 2).attr("y", 20).attr("text-anchor", "middle")
+        clippedGroup.append("path")
+            .datum(landFeatures)
+            .attr("d", pathGenerator)
+            .style("fill", "black")
+            .style("stroke", "#336633")
+            .style("stroke-width", 0.5);
+
+        svg.append("path")
+            .datum(sphereFeature)
+            .attr("d", pathGenerator)
+            .style("fill", "none")
+            .style("stroke", "#333")
+            .style("stroke-width", 1);
+
+        svg.append("text").attr("class", "map-title")
+           .attr("x", mapWidth / 2).attr("y", 20).attr("text-anchor", "middle")
            .style("font-size", "18px").style("font-family", "Arial, sans-serif").text(title);
 
         if (dipPoles) {
@@ -216,80 +222,128 @@ const MagMapApp = {
                 .style("paint-order", "stroke").style("stroke", "white").style("stroke-width", "2px")
                 .text("✱");
         }
-        return projection; // Return the configured projection
+        return { projection, pathGenerator, clippedGroup };
     },
 
-    // NEW helper to draw just the contour layer on an existing SVG with a given projection
-    drawContourLayer: function(svgId, projection, gridData, options) {
+    drawContourLayer: function(container, pathGenerator, gridData, options) {
         const { step, domain, colorFunc, majorMultiplier, labelCondition } = options;
-        const svg = d3.select(`#${svgId}`);
-        // --- START: The Fix for Projection Alignment ---
-        // Create a transform that maps grid coordinates back to geographic coordinates
-        // and then applies the map's projection.
-        const transform = d3.geoTransform({
-            point: function(x, y) {
-                const lon = (x / (gridData.width - 1)) * 360 - 180;
-                const lat = 90 - (y / (gridData.height - 1)) * 180;
-                const projectedPoint = projection([lon, lat]);
-                if (projectedPoint) {
-                    this.stream.point(projectedPoint[0], projectedPoint[1]);
-                }
-            }
-        });
 
-        // Create a new path generator that uses our custom transform.
-        const contourPathGenerator = d3.geoPath(transform);
-        // --- END: The Fix for Projection Alignment ---
-
-        const levels = d3.range(domain[0], domain[1] + 1, step);
+        const levels = d3.range(domain[0], domain[1] + (step/2), step);
+        if (domain[0] === 0 && domain[1] === 0 && !levels.includes(0)) levels.push(0);
         if (levels.length === 0) return;
 
-        const contours = d3.contours().size([gridData.width, gridData.height]).thresholds(levels)(gridData.values);
-        const contourGroup = svg.append("g").attr("class", "contours");
+        const contours = d3.contours()
+            .size([gridData.width, gridData.height])
+            .thresholds(levels)
+            .smooth(true) // ARTIFACT FIX: Smooth the resulting path geometry
+            (gridData.values);
 
-        contourGroup.selectAll("path.contour").data(contours).enter().append("path")
-            .attr("id", (d, i) => `path-${svgId}-${domain[0]}-${i}`)
-            // Use the new, corrected path generator for drawing
-            .attr("d", contourPathGenerator)
-            .style("fill", "none").style("stroke", d => colorFunc(d.value)).style("stroke-width", d => (labelCondition(d.value, step, majorMultiplier)) ? 2.0 : 1.0);
+        const geoContours = contours.map(contour => {
+            contour.coordinates = contour.coordinates.map(polygon =>
+                polygon.map(ring =>
+                    ring.map(point => [
+                        (point[0] / (gridData.width - 1)) * 360 - 180,
+                        90 - (point[1] / (gridData.height - 1)) * 180
+                    ])
+                )
+            );
+            return contour;
+        });
 
-        contourGroup.selectAll("text.contour-label").data(contours).enter().append("text")
+        const id_suffix = `${domain[0]}_${domain[1]}`;
+        const containerId = container.attr("id");
+        const contourGroup = container.append("g")
+            .attr("class", `contours contours-${id_suffix}`);
+
+        contourGroup.selectAll("path.contour")
+            .data(geoContours)
+            .enter().append("path")
+            .attr("id", (d, i) => `path-${containerId}-${id_suffix}-${i}`)
+            .attr("d", pathGenerator)
+            .style("fill", "none")
+            .style("stroke", d => colorFunc(d.value))
+            .style("stroke-width", d => (labelCondition(d.value, step, majorMultiplier)) ? 2.0 : 1.0);
+
+        contourGroup.selectAll("text.contour-label")
+            .data(geoContours)
+            .enter().append("text")
             .filter(d => labelCondition(d.value, step, majorMultiplier))
             .attr("dy", -3).append("textPath")
-            .attr("xlink:href", (d, i) => `#path-${svgId}-${domain[0]}-${i}`)
+            .attr("xlink:href", (d, i) => `#path-${containerId}-${id_suffix}-${i}`)
             .attr("startOffset", "50%").style("text-anchor", "middle").style("fill", "black").style("font-size", "9px")
             .style("paint-order", "stroke").style("stroke", "white").style("stroke-width", "2.5px").style("stroke-linejoin", "round")
             .text(d => d.value.toLocaleString());
-
-        // Explicitly bring the entire contour group to the front to ensure it's on top of the land.
-        contourGroup.raise();
     },
 
-    addLegend: function(svgId, legendItems) {
-        const { mapHeight } = this.config;
-        const svg = d3.select(`#${svgId}`);
-        svg.selectAll("g.legend").remove();
-        const legendGroup = svg.append("g").attr("class", "legend").attr("transform", `translate(30, ${mapHeight - 80})`);
-        legendItems.forEach((item, i) => {
-            const legendRow = legendGroup.append("g").attr("transform", `translate(0, ${i * 20})`);
-            legendRow.append("rect").attr("width", 18).attr("height", 18).style("fill", item.color).style("stroke", "black").style("stroke-width", 0.5);
-            legendRow.append("text").attr("x", 24).attr("y", 9).attr("dy", "0.35em").style("font-size", "11px").style("font-family", "Arial, sans-serif").text(item.text);
-        });
+    // --- Data Smoothing Helpers ---
+    applyGaussianBlur: function(data, width, height, radius) {
+        const blurKernel = this.createGaussianBlurKernel(radius);
+        const mid = Math.floor(blurKernel.length / 2);
+        const temp = new Float32Array(data.length);
+
+        // Horizontal pass
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                let sum = 0;
+                for (let i = 0; i < blurKernel.length; i++) {
+                    let col = x + i - mid;
+                    if (col < 0) col = 0;
+                    if (col >= width) col = width - 1;
+                    sum += data[y * width + col] * blurKernel[i];
+                }
+                temp[y * width + x] = sum;
+            }
+        }
+        // Vertical pass
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                let sum = 0;
+                for (let i = 0; i < blurKernel.length; i++) {
+                    let row = y + i - mid;
+                    if (row < 0) row = 0;
+                    if (row >= height) row = height - 1;
+                    sum += temp[row * width + x] * blurKernel[i];
+                }
+                data[y * width + x] = sum;
+            }
+        }
     },
 
-    // The rest of the functions (loadModel, generateGridData, calculateDipPoles, etc.)
-    // remain the same as the last version. I'll paste them here for a complete file.
-    loadModelIntoInstance, generateGridData, calculateDipPoles, drawGraticuleWithLabels
+    createGaussianBlurKernel: function(radius) {
+        const sigma = radius / 3;
+        const size = Math.floor(radius * 2) + 1;
+        const kernel = new Array(size);
+        const sigma22 = 2 * sigma * sigma;
+        const radiusInt = Math.floor(radius);
+        let sum = 0;
+        for (let i = 0; i < size; i++) {
+            const x = i - radiusInt;
+            const value = Math.exp(-(x * x) / sigma22);
+            kernel[i] = value;
+            sum += value;
+        }
+        for (let i = 0; i < size; i++) {
+            kernel[i] /= sum;
+        }
+        return kernel;
+    },
+
+    addLegend, loadModelIntoInstance, generateGridData, calculateDipPoles, drawGraticules
 };
 
-// --- Helper functions are now assigned to the MagMapApp object ---
-// ... (The full code for these functions is included below)
-
-// --- Kick off the application ---
 MagMapApp.init();
 
-// --- Definitions for the helper functions ---
-// (These are the same as the previous version)
+function addLegend(svgId, legendItems) {
+    const { mapHeight } = MagMapApp.config;
+    const svg = d3.select(`#${svgId}`);
+    svg.selectAll("g.legend").remove();
+    const legendGroup = svg.append("g").attr("class", "legend").attr("transform", `translate(30, ${mapHeight - 80})`);
+    legendItems.forEach((item, i) => {
+        const legendRow = legendGroup.append("g").attr("transform", `translate(0, ${i * 20})`);
+        legendRow.append("rect").attr("width", 18).attr("height", 18).style("fill", item.color).style("stroke", "black").style("stroke-width", 0.5);
+        legendRow.append("text").attr("x", 24).attr("y", 9).attr("dy", "0.35em").style("font-size", "11px").style("font-family", "Arial, sans-serif").text(item.text);
+    });
+}
 
 function loadModelIntoInstance(geomagInstance, cofFileContent) {
     try {
@@ -298,7 +352,7 @@ function loadModelIntoInstance(geomagInstance, cofFileContent) {
         geomagInstance.modelData.forEach((line, index) => {
             if (/^\s{3,}/.test(line)) {
                 modelI++;
-                if (modelI >= MAXMOD) throw new Error("Too many models");
+                if (modelI >= 30) throw new Error("Too many models");
                 const parts = line.trim().split(/\s+/);
                 geomagInstance.model[modelI] = parts[0] || '';
                 geomagInstance.epoch[modelI] = parseFloat(parts[1]) || 0;
@@ -328,54 +382,62 @@ function loadModelIntoInstance(geomagInstance, cofFileContent) {
 }
 
 function generateGridData(commonArgs, paramKey) {
+    // Destructure required arguments from the input object.
     const { geomagInstance, epoch, altitudeKm } = commonArgs;
+    // Extract grid and coordinate system configuration from the application config.
     const { igdgc, gridResolutionLat, gridResolutionLon } = MagMapApp.config;
 
-    // Use a coarser grid for calculation, then interpolate
-    const coarseFactor = 4; // 4x coarser grid
-    const coarseLat = Math.ceil(gridResolutionLat / coarseFactor);
-    const coarseLon = Math.ceil(gridResolutionLon / coarseFactor);
-    const coarseWidth = coarseLon + 1;
-    const coarseHeight = coarseLat;
-    const coarseValues = new Float32Array(coarseWidth * coarseHeight);
+    // --- FIX: Direct, high-resolution grid calculation ---
+    // The previous implementation used a coarse grid and bilinear interpolation,
+    // which created artifacts in areas of high gradient (like the poles).
+    // This new implementation calculates the value for every point on the final grid.
+    // It is more computationally expensive but produces a much more accurate result.
 
-    const lats = d3.range(90, -90 - 1e-9, -180 / (coarseHeight - 1));
-    const lons = d3.range(-180, 180 + 1e-9, 360 / coarseLon);
-
-    for (let i = 0; i < coarseHeight; i++) {
-        for (let j = 0; j < coarseWidth; j++) {
-            const pointGeomag = new Geomag();
-            pointGeomag.modelData = geomagInstance.modelData;
-            Object.assign(pointGeomag, { model: geomagInstance.model.slice(), nmodel: geomagInstance.nmodel, epoch: geomagInstance.epoch.slice(), yrmin: geomagInstance.yrmin.slice(), yrmax: geomagInstance.yrmax.slice(), altmin: geomagInstance.altmin.slice(), altmax: geomagInstance.altmax.slice(), max1: geomagInstance.max1.slice(), max2: geomagInstance.max2.slice(), max3: geomagInstance.max3.slice(), irec_pos: geomagInstance.irec_pos.slice() });
-            const field = pointGeomag.getFieldComponents(epoch, igdgc, altitudeKm, lats[i], lons[j]);
-            coarseValues[i * coarseWidth + j] = field[paramKey];
-        }
-    }
-
-    // Interpolate to fine grid
-    const width = gridResolutionLon + 1;
+    // Set grid dimensions: width (longitude), height (latitude).
+    // const width = gridResolutionLon + 1;
+    const width = gridResolutionLon;
     const height = gridResolutionLat;
+    // Pre-allocate a typed array to store computed field values for each grid cell.
     const values = new Float32Array(width * height);
+
+    // Generate latitude values from 90°N to -90°S, evenly spaced.
+    // const lats = d3.range(90, -90 - 1e-9, -180 / (height - 1));
+    // Alternative latitude and longitude generation (commented out).
+    const lats = d3.range(90, -90 - 1e-9, -180 / (height));
+    const lons = d3.range(-180, 180 - 1e-9, 360 / (width));
+    // Generate longitude values from 180°E to -180°W, evenly spaced.
+    // const lons = d3.range(180, -180 - 1e-9, -360 / (width - 1));
+
+    // Loop over each latitude and longitude grid point.
     for (let i = 0; i < height; i++) {
         for (let j = 0; j < width; j++) {
-            // Map fine grid indices to coarse grid space
-            const y = (i / (height - 1)) * (coarseHeight - 1);
-            const x = (j / (width - 1)) * (coarseWidth - 1);
-            const y0 = Math.floor(y), y1 = Math.min(y0 + 1, coarseHeight - 1);
-            const x0 = Math.floor(x), x1 = Math.min(x0 + 1, coarseWidth - 1);
-            const q11 = coarseValues[y0 * coarseWidth + x0];
-            const q21 = coarseValues[y0 * coarseWidth + x1];
-            const q12 = coarseValues[y1 * coarseWidth + x0];
-            const q22 = coarseValues[y1 * coarseWidth + x1];
-            const fy = y - y0, fx = x - x0;
-            // Bilinear interpolation
-            values[i * width + j] =
-                q11 * (1 - fx) * (1 - fy) +
-                q21 * fx * (1 - fy) +
-                q12 * (1 - fx) * fy +
-                q22 * fx * fy;
+            // Instantiate a new Geomag object for each point to ensure no state is carried over.
+            // This is slow but safe, mimicking the original's approach on its coarse grid.
+            const pointGeomag = new Geomag();
+            // Copy all relevant model data and parameters from the provided geomagInstance.
+            pointGeomag.modelData = geomagInstance.modelData;
+            Object.assign(pointGeomag, {
+                model: geomagInstance.model.slice(),
+                nmodel: geomagInstance.nmodel,
+                epoch: geomagInstance.epoch.slice(),
+                yrmin: geomagInstance.yrmin.slice(),
+                yrmax: geomagInstance.yrmax.slice(),
+                altmin: geomagInstance.altmin.slice(),
+                altmax: geomagInstance.altmax.slice(),
+                max1: geomagInstance.max1.slice(),
+                max2: geomagInstance.max2.slice(),
+                max3: geomagInstance.max3.slice(),
+                irec_pos: geomagInstance.irec_pos.slice()
+            });
+
+            // Compute the geomagnetic field components at the current grid point.
+            const field = pointGeomag.getFieldComponents(epoch, igdgc, altitudeKm, lats[i], lons[j]);
+            // Store the requested field parameter value in the output array.
+            values[i * width + j] = field[paramKey];
         }
     }
+
+    // Return the computed grid values and dimensions.
     return { values, width, height };
 }
 
@@ -411,15 +473,13 @@ async function calculateDipPoles(geomagInstance, epoch, altitudeKm) {
     return poles;
 }
 
-function drawGraticuleWithLabels(svg, projection) {
+function drawGraticules(clippedContainer, unclippedContainer, projection, pathGenerator) {
     const graticule = d3.geoGraticule();
-    const pathGenerator = d3.geoPath(projection);
-    const {mapWidth, mapHeight} = MagMapApp.config;
 
-    svg.append("path").datum(graticule.step([15, 15])).attr("d", pathGenerator).style("fill", "none").style("stroke", "#ccc").style("stroke-width", 0.5).style("stroke-dasharray", "2,2");
-    svg.append("path").datum(graticule.step([30, 30])).attr("d", pathGenerator).style("fill", "none").style("stroke", "#aaa").style("stroke-width", 0.7);
+    clippedContainer.append("path").datum(graticule.step([15, 15])).attr("d", pathGenerator).style("fill", "none").style("stroke", "#ccc").style("stroke-width", 0.5).style("stroke-dasharray", "2,2");
+    clippedContainer.append("path").datum(graticule.step([30, 30])).attr("d", pathGenerator).style("fill", "none").style("stroke", "#aaa").style("stroke-width", 0.7);
 
-    const graticuleGroup = svg.append("g").attr("class", "graticule-labels").style("font-family", "sans-serif").style("font-size", "10px").style("fill", "#333");
+    const graticuleGroup = unclippedContainer.append("g").attr("class", "graticule-labels").style("font-family", "sans-serif").style("font-size", "10px").style("fill", "#333");
     const bounds = pathGenerator.bounds({type: "Sphere"});
     const left = bounds[0][0], top = bounds[0][1], right = bounds[1][0], bottom = bounds[1][1];
 
