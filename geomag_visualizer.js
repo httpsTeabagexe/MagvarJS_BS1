@@ -463,30 +463,68 @@ async function calculateDipPoles(geomagInstance, epoch, altitudeKm) {
     let poles = [];
     const findPole = async (startLat, latDir) => {
         let bestPoint = { lat: startLat, lon: 0, val: latDir * -Infinity };
-        for (let lat = startLat; Math.abs(lat) >= 60; lat -= latDir * 10) {
-            for (let lon = -180; lon < 180; lon += 20) {
-                 const tempGeomag = new Geomag(); tempGeomag.modelData = geomagInstance.modelData; Object.assign(tempGeomag, { model: geomagInstance.model.slice(), nmodel: geomagInstance.nmodel, epoch: geomagInstance.epoch.slice(), yrmin: geomagInstance.yrmin.slice(), yrmax: geomagInstance.yrmax.slice(), altmin: geomagInstance.altmin.slice(), altmax: geomagInstance.altmax.slice(), max1: geomagInstance.max1.slice(), max2: geomagInstance.max2.slice(), max3: geomagInstance.max3.slice(), irec_pos: geomagInstance.irec_pos.slice() });
+        // Use absolute coordinates for search
+        for (let latAbs = 0; latAbs <= 180; latAbs += 10) {
+            let lat = 90 - latAbs;
+            for (let lonAbs = 0; lonAbs < 360; lonAbs += 20) {
+                let lon = lonAbs - 180;
+                const tempGeomag = new Geomag();
+                tempGeomag.modelData = geomagInstance.modelData;
+                Object.assign(tempGeomag, {
+                    model: geomagInstance.model.slice(),
+                    nmodel: geomagInstance.nmodel,
+                    epoch: geomagInstance.epoch.slice(),
+                    yrmin: geomagInstance.yrmin.slice(),
+                    yrmax: geomagInstance.yrmax.slice(),
+                    altmin: geomagInstance.altmin.slice(),
+                    altmax: geomagInstance.altmax.slice(),
+                    max1: geomagInstance.max1.slice(),
+                    max2: geomagInstance.max2.slice(),
+                    max3: geomagInstance.max3.slice(),
+                    irec_pos: geomagInstance.irec_pos.slice()
+                });
                 const field = tempGeomag.getFieldComponents(epoch, igdgc, altitudeKm, lat, lon);
-                if (!isNaN(field.i_deg) && (latDir * field.i_deg > latDir * bestPoint.val)) { bestPoint = { lat, lon, val: field.i_deg }; }
+                if (!isNaN(field.i_deg) && (latDir * field.i_deg > latDir * bestPoint.val)) {
+                    bestPoint = { lat, latAbs, lon, lonAbs, val: field.i_deg };
+                }
             }
         }
+        // Refine search
         let searchRadius = 5, searchStep = 1;
         for(let i=0; i<3; i++) {
-            for(let lat = bestPoint.lat - searchRadius; lat <= bestPoint.lat + searchRadius; lat += searchStep) {
-                for(let lon = bestPoint.lon - searchRadius; lon <= bestPoint.lon + searchRadius; lon += searchStep) {
-                     const tempGeomag = new Geomag(); tempGeomag.modelData = geomagInstance.modelData; Object.assign(tempGeomag, { model: geomagInstance.model.slice(), nmodel: geomagInstance.nmodel, epoch: geomagInstance.epoch.slice(), yrmin: geomagInstance.yrmin.slice(), yrmax: geomagInstance.yrmax.slice(), altmin: geomagInstance.altmin.slice(), altmax: geomagInstance.altmax.slice(), max1: geomagInstance.max1.slice(), max2: geomagInstance.max2.slice(), max3: geomagInstance.max3.slice(), irec_pos: geomagInstance.irec_pos.slice() });
+            for(let latAbs = Math.max(0, bestPoint.latAbs - searchRadius); latAbs <= Math.min(180, bestPoint.latAbs + searchRadius); latAbs += searchStep) {
+                let lat = 90 - latAbs;
+                for(let lonAbs = Math.max(0, bestPoint.lonAbs - searchRadius); lonAbs <= Math.min(360, bestPoint.lonAbs + searchRadius); lonAbs += searchStep) {
+                    let lon = lonAbs - 180;
+                    const tempGeomag = new Geomag();
+                    tempGeomag.modelData = geomagInstance.modelData;
+                    Object.assign(tempGeomag, {
+                        model: geomagInstance.model.slice(),
+                        nmodel: geomagInstance.nmodel,
+                        epoch: geomagInstance.epoch.slice(),
+                        yrmin: geomagInstance.yrmin.slice(),
+                        yrmax: geomagInstance.yrmax.slice(),
+                        altmin: geomagInstance.altmin.slice(),
+                        altmax: geomagInstance.altmax.slice(),
+                        max1: geomagInstance.max1.slice(),
+                        max2: geomagInstance.max2.slice(),
+                        max3: geomagInstance.max3.slice(),
+                        irec_pos: geomagInstance.irec_pos.slice()
+                    });
                     const field = tempGeomag.getFieldComponents(epoch, igdgc, altitudeKm, lat, lon);
-                    if (!isNaN(field.i_deg) && (latDir * field.i_deg > latDir * bestPoint.val)) { bestPoint = { lat, lon, val: field.i_deg }; }
+                    if (!isNaN(field.i_deg) && (latDir * field.i_deg > latDir * bestPoint.val)) {
+                        bestPoint = { lat, latAbs, lon, lonAbs, val: field.i_deg };
+                    }
                 }
             }
             searchRadius /= 2; searchStep /= 2;
         }
         return bestPoint;
     };
-    const northPole = await findPole(90, 1);
-    if (northPole.val > 80) poles.push({ name: "North Dip Pole", lat: 90 - Math.abs(northPole.lat), latAbs: Math.abs(northPole.lat), lon: (northPole.lon + 180) % 360, lonAbs: (northPole.lon + 180) % 360 });
-    const southPole = await findPole(-90, -1);
-    if (southPole.val < -80) poles.push({ name: "South Dip Pole", lat: 90 - Math.abs(southPole.lat), latAbs: Math.abs(southPole.lat), lon: (southPole.lon + 180) % 360, lonAbs: (southPole.lon + 180) % 360 });
+    const northPole = await findPole(0, 1);
+    if (northPole.val > 80) poles.push({ name: "North Dip Pole", lat: northPole.lat, latAbs: northPole.latAbs, lon: northPole.lon, lonAbs: northPole.lonAbs });
+    const southPole = await findPole(180, -1);
+    if (southPole.val < -80) poles.push({ name: "South Dip Pole", lat: southPole.lat, latAbs: southPole.latAbs, lon: southPole.lon, lonAbs: southPole.lonAbs });
     return poles;
 }
 
