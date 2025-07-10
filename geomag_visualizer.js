@@ -217,7 +217,12 @@ const MagMapApp = {
 
         if (dipPoles) {
             svg.selectAll("text.dip-pole").data(dipPoles).enter().append("text")
-                .attr("transform", d => `translate(${projection([d.lon, d.lat])})`)
+                .attr("transform", d => {
+                    // Accept both abs and standard coordinates for dip poles
+                    let lon = d.lon > 180 ? d.lon - 360 : d.lon;
+                    let lat = d.lat > 90 ? 90 - d.lat : d.lat;
+                    return `translate(${projection([lon, lat])})`;
+                })
                 .style("fill", "black").style("font-size", "24px").style("text-anchor", "middle").attr("dy", ".35em")
                 .style("paint-order", "stroke").style("stroke", "white").style("stroke-width", "2px")
                 .text("✱");
@@ -235,17 +240,29 @@ const MagMapApp = {
         const contours = d3.contours()
             .size([gridData.width, gridData.height])
             .thresholds(levels)
-            .smooth(true) // ARTIFACT FIX: Smooth the resulting path geometry
+            .smooth(true)
             (gridData.values);
 
+        // --- Use absolute coordinates for contour conversion ---
         const geoContours = contours.map(contour => {
             contour.coordinates = contour.coordinates.map(polygon =>
-                polygon.map(ring =>
-                    ring.map(point => [
-                        (point[0] / (gridData.width - 1)) * 360 - 180,
-                        90 - (point[1] / (gridData.height - 1)) * 180
-                    ])
-                )
+                polygon.map(ring => {
+                    let prevLonAbs = null;
+                    let splitRings = [[]];
+                    for (let k = 0; k < ring.length; k++) {
+                        let x = ring[k][0];
+                        let y = ring[k][1];
+                        // Use precomputed abs arrays for more accurate mapping
+                        let lonAbs = gridData.lonAbsArr[Math.round(x)];
+                        let latAbs = gridData.latAbsArr[Math.round(y)];
+                        if (prevLonAbs !== null && Math.abs(lonAbs - prevLonAbs) > 180) {
+                            splitRings.push([]);
+                        }
+                        splitRings[splitRings.length - 1].push([lonAbs, latAbs]);
+                        prevLonAbs = lonAbs;
+                    }
+                    return splitRings.length > 1 ? splitRings : splitRings[0];
+                })
             );
             return contour;
         });
@@ -259,7 +276,16 @@ const MagMapApp = {
             .data(geoContours)
             .enter().append("path")
             .attr("id", (d, i) => `path-${containerId}-${id_suffix}-${i}`)
-            .attr("d", pathGenerator)
+            // Convert back to standard coordinates for pathGenerator
+            .attr("d", d => pathGenerator({
+                type: d.type,
+                value: d.value,
+                coordinates: d.coordinates.map(polygon =>
+                    polygon.map(ring =>
+                        ring.map(([lonAbs, latAbs]) => [lonAbs - 180, 90 - latAbs])
+                    )
+                )
+            }))
             .style("fill", "none")
             .style("stroke", d => colorFunc(d.value))
             .style("stroke-width", d => (labelCondition(d.value, step, majorMultiplier)) ? 2.0 : 1.0);
@@ -394,27 +420,22 @@ function generateGridData(commonArgs, paramKey) {
     // It is more computationally expensive but produces a much more accurate result.
 
     // Set grid dimensions: width (longitude), height (latitude).
-    // const width = gridResolutionLon + 1;
-    const width = gridResolutionLon;
+    const width = gridResolutionLon + 1; // Add extra column for wraparound
     const height = gridResolutionLat;
-    // Pre-allocate a typed array to store computed field values for each grid cell.
     const values = new Float32Array(width * height);
 
-    // Generate latitude values from 90°N to -90°S, evenly spaced.
-    // const lats = d3.range(90, -90 - 1e-9, -180 / (height - 1));
-    // Alternative latitude and longitude generation (commented out).
-    const lats = d3.range(90, -90 - 1e-9, -180 / (height));
-    const lons = d3.range(-180, 180 - 1e-9, 360 / (width));
-    // Generate longitude values from 180°E to -180°W, evenly spaced.
-    // const lons = d3.range(180, -180 - 1e-9, -360 / (width - 1));
+    // Generate latitude and longitude arrays in absolute coordinates
+    // Longitude: 0 to 360, Latitude: 0 to 180
+    const latAbsArr = d3.range(0, 180 + 1e-9, 180 / (height));
+    const lonAbsArr = d3.range(0, 360 + 1e-9, 360 / (width));
 
-    // Loop over each latitude and longitude grid point.
     for (let i = 0; i < height; i++) {
         for (let j = 0; j < width; j++) {
-            // Instantiate a new Geomag object for each point to ensure no state is carried over.
-            // This is slow but safe, mimicking the original's approach on its coarse grid.
+            // Convert absolute coordinates to standard for field calculation
+            let lat = 90 - latAbsArr[i];
+            let lon = lonAbsArr[j] - 180;
+            // Store absolute coordinates for possible use in other layers
             const pointGeomag = new Geomag();
-            // Copy all relevant model data and parameters from the provided geomagInstance.
             pointGeomag.modelData = geomagInstance.modelData;
             Object.assign(pointGeomag, {
                 model: geomagInstance.model.slice(),
@@ -429,16 +450,12 @@ function generateGridData(commonArgs, paramKey) {
                 max3: geomagInstance.max3.slice(),
                 irec_pos: geomagInstance.irec_pos.slice()
             });
-
-            // Compute the geomagnetic field components at the current grid point.
-            const field = pointGeomag.getFieldComponents(epoch, igdgc, altitudeKm, lats[i], lons[j]);
-            // Store the requested field parameter value in the output array.
+            const field = pointGeomag.getFieldComponents(epoch, igdgc, altitudeKm, lat, lon);
             values[i * width + j] = field[paramKey];
         }
     }
-
-    // Return the computed grid values and dimensions.
-    return { values, width, height };
+    // Attach abs arrays to gridData for use in other layers
+    return { values, width, height, latAbsArr, lonAbsArr };
 }
 
 async function calculateDipPoles(geomagInstance, epoch, altitudeKm) {
@@ -467,9 +484,9 @@ async function calculateDipPoles(geomagInstance, epoch, altitudeKm) {
         return bestPoint;
     };
     const northPole = await findPole(90, 1);
-    if (northPole.val > 80) poles.push({ name: "North Dip Pole", lat: northPole.lat, lon: northPole.lon });
+    if (northPole.val > 80) poles.push({ name: "North Dip Pole", lat: 90 - Math.abs(northPole.lat), latAbs: Math.abs(northPole.lat), lon: (northPole.lon + 180) % 360, lonAbs: (northPole.lon + 180) % 360 });
     const southPole = await findPole(-90, -1);
-    if (southPole.val < -80) poles.push({ name: "South Dip Pole", lat: southPole.lat, lon: southPole.lon });
+    if (southPole.val < -80) poles.push({ name: "South Dip Pole", lat: 90 - Math.abs(southPole.lat), latAbs: Math.abs(southPole.lat), lon: (southPole.lon + 180) % 360, lonAbs: (southPole.lon + 180) % 360 });
     return poles;
 }
 
@@ -483,19 +500,22 @@ function drawGraticules(clippedContainer, unclippedContainer, projection, pathGe
     const bounds = pathGenerator.bounds({type: "Sphere"});
     const left = bounds[0][0], top = bounds[0][1], right = bounds[1][0], bottom = bounds[1][1];
 
-    for (let lon = -150; lon <= 150; lon += 30) {
+    // Draw graticule labels using absolute coordinates
+    for (let lonAbs = 0; lonAbs <= 360; lonAbs += 30) {
+        const lon = lonAbs - 180;
         const point = projection([lon, 0]);
         if(point) {
-            graticuleGroup.append("text").attr("x", point[0]).attr("y", top - 8).text(`${Math.abs(lon)}°`);
-            graticuleGroup.append("text").attr("x", point[0]).attr("y", bottom + 15).text(`${Math.abs(lon)}°`);
+            graticuleGroup.append("text").attr("x", point[0]).attr("y", top - 8).text(`${lonAbs}°`);
+            graticuleGroup.append("text").attr("x", point[0]).attr("y", bottom + 15).text(`${lonAbs}°`);
         }
     }
-    for (let lat = -60; lat <= 60; lat += 30) {
-        if(lat === 0) continue;
+    for (let latAbs = 0; latAbs <= 180; latAbs += 30) {
+        if(latAbs === 90) continue;
+        const lat = 90 - latAbs;
         const point = projection([0, lat]);
         if(point) {
-            graticuleGroup.append("text").attr("x", left - 20).attr("y", point[1]).text(`${Math.abs(lat)}°${lat > 0 ? 'N' : 'S'}`);
-            graticuleGroup.append("text").attr("x", right + 20).attr("y", point[1]).text(`${Math.abs(lat)}°${lat > 0 ? 'N' : 'S'}`);
+            graticuleGroup.append("text").attr("x", left - 20).attr("y", point[1]).text(`${latAbs}°${lat > 0 ? 'N' : 'S'}`);
+            graticuleGroup.append("text").attr("x", right + 20).attr("y", point[1]).text(`${latAbs}°${lat > 0 ? 'N' : 'S'}`);
         }
     }
     graticuleGroup.selectAll("text").style("text-anchor", "middle").attr("dy", ".35em");
