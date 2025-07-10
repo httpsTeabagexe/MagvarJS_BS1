@@ -1,9 +1,6 @@
 // geomag_visualizer.js
 // Main application for visualizing geomagnetic data on a world map using D3.js and TopoJSON
 
-        // gridResolutionLon: 360, // Number of longitude grid points
-        // gridResolutionLat: 180, // Number of latitude grid points
-
 const MagMapApp = {
     // --- Configuration ---
     config: {
@@ -19,6 +16,7 @@ const MagMapApp = {
     // --- Application State ---
     geomagInstance: null, // Instance of Geomag class
     cofFileContentCache: null, // Cached content of COF file
+    isSmoothingEnabled: true, // Control for interpolation/smoothing
 
     // --- Main Initializer ---
     init: function() {
@@ -32,6 +30,12 @@ const MagMapApp = {
     setupUIListeners: function() {
         document.getElementById('renderButton').addEventListener('click', () => this.handleRenderClick());
         document.getElementById('fieldSelect').addEventListener('change', () => this.handleRenderClick());
+        const smoothingButton = document.getElementById('smoothingButton');
+        smoothingButton.addEventListener('click', () => {
+            this.isSmoothingEnabled = !this.isSmoothingEnabled;
+            smoothingButton.textContent = this.isSmoothingEnabled ? 'Smoothing: On' : 'Smoothing: Off';
+            this.handleRenderClick();
+        });
     },
 
     updateStatus: function(message, isError = false) {
@@ -159,7 +163,9 @@ const MagMapApp = {
         const gridData = this.generateGridData(commonArgs, paramKey);
 
         // --- ARTIFACT FIX: Apply a Gaussian blur to smooth the data grid ---
-        this.applyGaussianBlur(gridData.values, gridData.width, gridData.height, 1.5);
+        if (this.isSmoothingEnabled) {
+            this.applyGaussianBlur(gridData.values, gridData.width, gridData.height, 1.5);
+        }
 
         const passes = [positiveOptions, negativeOptions, zeroOptions];
         for (const options of passes) {
@@ -240,7 +246,7 @@ const MagMapApp = {
         const contours = d3.contours()
             .size([gridData.width, gridData.height])
             .thresholds(levels)
-            .smooth(true)
+            .smooth(this.isSmoothingEnabled)
             (gridData.values);
 
         // --- Use absolute coordinates for contour conversion ---
@@ -426,8 +432,8 @@ function generateGridData(commonArgs, paramKey) {
 
     // Generate latitude and longitude arrays in absolute coordinates
     // Longitude: 0 to 360, Latitude: 0 to 180
-    const latAbsArr = d3.range(0, 180 + 1e-9, 180 / (height));
-    const lonAbsArr = d3.range(0, 360 + 1e-9, 360 / (width));
+    const latAbsArr = d3.range(0, 180 + 1e-9, 180 / (height - 1)).concat(180);
+    const lonAbsArr = d3.range(0, 360 + 1e-9, 360 / (width - 1)).concat(360);
 
     for (let i = 0; i < height; i++) {
         for (let j = 0; j < width; j++) {
