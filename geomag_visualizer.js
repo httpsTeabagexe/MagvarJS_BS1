@@ -604,7 +604,6 @@
 //     graticuleGroup.selectAll("text").style("text-anchor", "middle").attr("dy", ".35em");
 // }
 
-
 // --- Marching Squares Helper Functions ---
 function lerp(threshold, p1_val, p2_val) {
     // Avoid division by zero
@@ -642,7 +641,7 @@ const MagMapApp = {
     geomagInstance: null, // Instance of Geomag class
     cofFileContentCache: null, // Cached content of COF file
     isSmoothingEnabled: true, // Control for interpolation/smoothing
-    isUncertaintyVisible: true, // Control for uncertainty zones visibility
+    isUncertaintyVisible: false, // Control for uncertainty zones visibility
 
     // --- Main Initializer ---
     init: function() {
@@ -652,7 +651,7 @@ const MagMapApp = {
         });
     },
 
-    // --- NEW HELPER: Updates the uncertainty button's state and appearance ---
+    // --- Helper: Updates the uncertainty button's state and appearance ---
     updateUncertaintyButtonState: function() {
         const field = document.getElementById('fieldSelect').value;
         const uncertaintyButton = document.getElementById('uncertaintyButton');
@@ -816,7 +815,7 @@ const MagMapApp = {
             legend = [ { color: "#A52A2A", text: "Total Intensity (F)" } ];
             positiveOptions = { step, domain: [20000, 66000], colorFunc, majorMultiplier, labelCondition };
             negativeOptions = { step, domain: [0, -1], colorFunc, majorMultiplier, labelCondition };
-            zeroOptions = { step: 1, domain: [-1, -1], colorFunc, majorMultiplier: labelCondition };
+            zeroOptions = { step: 1, domain: [-1, -1], colorFunc, majorMultiplier, labelCondition };
         }
 
         const { pathGenerator, clippedGroup } = this.drawBaseMap(svgId, land, sphere, title, dipPoles);
@@ -833,12 +832,15 @@ const MagMapApp = {
             }
         }
 
-        // --- UPDATED: Draw uncertainty layer if applicable for D or I ---
+        // --- UPDATED: Draw Blackout Zones if applicable for D or I ---
         if (this.isUncertaintyVisible && (field === 'declination' || field === 'inclination')) {
-            this.updateStatus('Calculating uncertainty zones...', false);
+            this.updateStatus('Calculating blackout zones...', false);
             const hGridData = this.generateGridData(commonArgs, 'h');
-            this.drawUncertaintyLayer(clippedGroup, pathGenerator, hGridData);
-            legend.push({ color: "rgba(255, 165, 0, 0.4)", text: "Uncertainty Zone (H < 5000 nT)" });
+            this.drawBlackoutZones(clippedGroup, pathGenerator, hGridData);
+
+            // Add new legend items
+            legend.push({ color: "rgba(255, 165, 0, 0.4)", text: "Caution Zone (H < 6000 nT)" });
+            legend.push({ color: "rgba(255, 0, 0, 0.5)", text: "Unreliable Zone (H < 2000 nT)" });
         }
 
         this.addLegend(svgId, legend);
@@ -980,23 +982,17 @@ const MagMapApp = {
         }
     },
 
-    // --- CORRECTED: Function to draw uncertainty layer ---
-    drawUncertaintyLayer: function(container, pathGenerator, gridData) {
-        const uncertaintyThreshold = 5000; // Horizontal intensity (H) in nT
+    // --- UPDATED: Function to draw Blackout Zones with two levels ---
+    drawBlackoutZones: function(container, pathGenerator, gridData) {
+        // Define the zones. They are drawn in order, so the more critical (smaller threshold)
+        // zone should come last to be drawn on top.
+        const zones = [
+            { threshold: 6000, color: "rgba(255, 165, 0, 0.4)", class: "caution-zone" },  // Caution Zone (0-6000 nT)
+            { threshold: 2000, color: "rgba(255, 0, 0, 0.5)", class: "unreliable-zone" } // Unreliable Zone (0-2000 nT)
+        ];
 
-        // Invert the data: we want to find where H is LOW.
-        // d3.contours finds areas where value > threshold.
-        // So we find where -H > -5000, which is equivalent to H < 5000.
         const invertedValues = gridData.values.map(v => -v);
 
-        const contours = d3.contours()
-            .size([gridData.width, gridData.height])
-            .thresholds([-uncertaintyThreshold]); // Use a single, negative threshold
-
-        const contourGeoJson = contours(invertedValues);
-
-        // This function transforms the grid-based coordinates from d3.contours
-        // into geographic coordinates (lon, lat) for the projection.
         const geoTransform = ({type, value, coordinates}) => {
             return {
                 type, value,
@@ -1010,17 +1006,23 @@ const MagMapApp = {
             };
         };
 
-        container.append("g")
-            .attr("class", "uncertainty-layer")
-            .selectAll("path")
-            .data(contourGeoJson.map(geoTransform))
-            .enter().append("path")
-              .attr("d", pathGenerator)
-              .style("fill", "rgba(255, 165, 0, 0.4)") // Semi-transparent orange
-              .style("stroke", "rgba(255, 140, 0, 0.6)")
-              .style("stroke-width", 0.5);
-    },
+        zones.forEach(zone => {
+            const contours = d3.contours()
+                .size([gridData.width, gridData.height])
+                .thresholds([-zone.threshold]); // Find where -H > -threshold => H < threshold
 
+            const contourGeoJson = contours(invertedValues);
+
+            container.append("g")
+                .attr("class", zone.class)
+                .selectAll("path")
+                .data(contourGeoJson.map(geoTransform))
+                .enter().append("path")
+                  .attr("d", pathGenerator)
+                  .style("fill", zone.color)
+                  .style("stroke", "none");
+        });
+    },
 
     // --- Data Smoothing Helpers ---
     applyGaussianBlur: function(data, width, height, radius) {
