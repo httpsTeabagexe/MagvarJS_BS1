@@ -18,7 +18,6 @@ function binaryToType(nw, ne, se, sw) {
     return type;
 }
 
-
 const MagMapApp = {
     // --- Configuration ---
     config: {
@@ -30,7 +29,6 @@ const MagMapApp = {
         worldAtlasURL: './data/countries-110m.json',
         cofURL: './data/IGRF14.COF'
     },
-
 
     // --- Application State ---
     geomagInstance: null, // Instance of Geomag class
@@ -44,25 +42,25 @@ const MagMapApp = {
 
     // --- Main Initializer ---
     init: function() {
-    document.addEventListener('DOMContentLoaded', () => {
-        console.log("Initializing...");
-        console.log("D3 version:", d3.version);
-        try {
-            // Initialize click info window
-            this.clickInfoWindow = d3.select("body").append("div")
-                .attr("class", "coordinate-info")
-                .style("position", "absolute")
-                .style("display", "none");
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log("Initializing...");
+            console.log("D3 version:", d3.version);
+            try {
+                // Initialize click info window
+                this.clickInfoWindow = d3.select("body").append("div")
+                    .attr("class", "coordinate-info")
+                    .style("position", "absolute")
+                    .style("display", "none");
 
-            this.setupUIListeners();
-            this.initializeGeomag().then(() => {
-                console.log("Geomag initialized, projection should be available after first render");
-            });
-        } catch (error) {
-            console.error("Initialization error:", error);
-        }
-    });
-},
+                this.setupUIListeners();
+                this.initializeGeomag().then(() => {
+                    console.log("Geomag initialized, projection should be available after first render");
+                });
+            } catch (error) {
+                console.error("Initialization error:", error);
+            }
+        });
+    },
 
     // --- Helper: Updates the uncertainty button's state and appearance ---
     updateUncertaintyButtonState: function() {
@@ -110,8 +108,8 @@ const MagMapApp = {
         this.updateUncertaintyButtonState();
 
         document.addEventListener('click', (e) => {
-        if (!e.target.closest('#geomag-map') && !e.target.closest('.coordinate-info')) {
-            this.clickInfoWindow.style("display", "none");
+            if (!e.target.closest('#geomag-map') && !e.target.closest('.coordinate-info')) {
+                this.clickInfoWindow.style("display", "none");
             }
         });
     },
@@ -153,6 +151,22 @@ const MagMapApp = {
         }
     },
 
+    clearOverlays: function() {
+        const svg = d3.select("#geomag-map");
+        svg.selectAll(".contours-manual").remove();
+        svg.selectAll(".caution-zone").remove();
+        svg.selectAll(".unreliable-zone").remove();
+        svg.selectAll(".legend").remove();
+        this.clearClickElements(); // Also clear any click-related elements
+    },
+
+    isPointInMap: function(x, y) {
+        const svg = d3.select("#geomag-map");
+        const width = +svg.attr("width");
+        const height = +svg.attr("height");
+        return x >= 0 && x <= width && y >= 0 && y <= height;
+    },
+
     handleRenderClick: async function() {
         if (!this.geomagInstance || this.geomagInstance.nmodel === 0) {
             this.updateStatus('Initializing Geomag model first...', false);
@@ -160,6 +174,8 @@ const MagMapApp = {
             if (!initialized) return;
         }
 
+        // Clear previous overlays
+        this.clearOverlays();
         const currentEpoch = parseFloat(document.getElementById('epochInput').value);
         const currentAltitude = parseFloat(document.getElementById('altitudeInput').value);
         const gridStep = parseFloat(document.getElementById('gridStepInput').value);
@@ -184,6 +200,9 @@ const MagMapApp = {
     },
 
     renderGeomagMap: async function(svgId, geomagInstance, currentEpoch, currentAltitude, field) {
+        // Clear previous overlays first
+        this.clearOverlays();
+
         const world = await d3.json(this.config.worldAtlasURL).catch(e => console.error("Failed to fetch world map data:", e));
         if (!world) return;
         const land = topojson.feature(world, world.objects.countries);
@@ -346,38 +365,44 @@ const MagMapApp = {
                 console.error("Error handling click event:", error);
             }
         });
-    return { projection: this.projection, pathGenerator, clippedGroup };
-},
+        return { projection: this.projection, pathGenerator, clippedGroup };
+    },
+
     handleMapClick: function(x, y, projection) {
-    if (!projection || typeof projection.invert !== 'function') {
-        console.error("Projection not properly initialized");
-        return;
-    }
-    // Clear previous elements
-    this.clearClickElements();
-    try {
-        // Convert pixel coordinates to geographic coordinates
-        const coords = projection.invert([x, y]);
-        if (!coords || coords.some(isNaN)) {
-            console.error("Invalid coordinates:", coords);
-            return;
+        // Clear previous elements
+        this.clearClickElements();
+
+        // Check if click is within map boundaries
+        if (!this.isPointInMap(x, y)) {
+            return; // Ignore clicks outside the map
         }
-        console.log("Clicked at:", {x, y, lon: coords[0], lat: coords[1]});
-        this.currentClickPoint = {x, y, lon: coords[0], lat: coords[1]};
-        // Get geomagnetic data for this point
-        const field = this.getFieldAtPoint(coords);
-        if (!field) {
-            console.error("Failed to get field data");
-            return;
+
+        try {
+            // Convert pixel coordinates to geographic coordinates
+            const coords = projection.invert([x, y]);
+            if (!coords || coords.some(isNaN)) {
+                console.error("Invalid coordinates:", coords);
+                return;
+            }
+            console.log("Clicked at:", {x, y, lon: coords[0], lat: coords[1]});
+            this.currentClickPoint = {x, y, lon: coords[0], lat: coords[1]};
+
+            // Get geomagnetic data for this point
+            const field = this.getFieldAtPoint(coords);
+            if (!field) {
+                console.error("Failed to get field data");
+                return;
+            }
+
+            // Show info window
+            this.showCoordinateInfo(x, y, coords, field);
+
+            // Draw isolines from this point
+            this.drawIsolinesFromPoint(coords, field);
+        } catch (error) {
+            console.error("Error handling map click:", error);
         }
-        // Show info window
-        this.showCoordinateInfo(x, y, coords, field);
-        // Draw isolines from this point
-        this.drawIsolinesFromPoint(coords, field);
-    } catch (error) {
-        console.error("Error handling map click:", error);
-    }
-},
+    },
 
     // --- Helper: Clears the info window and isolines on the map ---
     clearClickElements: function() {
@@ -467,49 +492,50 @@ const MagMapApp = {
         } catch (error) {
             console.error("Error showing coordinate info:", error);
         }
-},
+    },
 
     drawIsolinesFromPoint: function(coords) {
-    const svg = d3.select("#geomag-map");
+        const svg = d3.select("#geomag-map");
 
-    // Remove previous isolines
-    if (this.currentIsolines) {
-        this.currentIsolines.remove();
-    }
+        // Remove previous isolines
+        if (this.currentIsolines) {
+            this.currentIsolines.remove();
+        }
 
-    const [lon, lat] = coords;
-    const field = document.getElementById('fieldSelect').value;
-    const currentValue = this.getFieldAtPoint(coords)[field === 'declination' ? 'd_deg' :
-                                                    field === 'inclination' ? 'i_deg' : 'f'];
+        const [lon, lat] = coords;
+        const field = document.getElementById('fieldSelect').value;
+        const currentValue = this.getFieldAtPoint(coords)[field === 'declination' ? 'd_deg' :
+                                                          field === 'inclination' ? 'i_deg' : 'f'];
 
-    // Create a group for isolines
-    this.currentIsolines = svg.append("g").attr("class", "isolines-group");
+        // Create a group for isolines
+        this.currentIsolines = svg.append("g").attr("class", "isolines-group");
 
-    // Draw circle around the point
-    this.currentIsolines.append("circle")
-        .attr("cx", this.currentClickPoint.x)  // FIXED: use .x property
-        .attr("cy", this.currentClickPoint.y)  // FIXED: use .y property
-        .attr("r", 5)
-        .attr("fill", "red")
-        .attr("stroke", "white")
-        .attr("stroke-width", 1);
+        // Draw circle around the point
+        this.currentIsolines.append("circle")
+            .attr("cx", this.currentClickPoint.x)  // FIXED: use .x property
+            .attr("cy", this.currentClickPoint.y)  // FIXED: use .y property
+            .attr("r", 5)
+            .attr("fill", "red")
+            .attr("stroke", "white")
+            .attr("stroke-width", 1);
 
-    // Draw isoline
-    const pathGenerator = d3.geoPath().projection(this.projection);
-    const circle = d3.geoCircle().center([lon, lat]).radius(2);
+        // Draw isoline
+        const pathGenerator = d3.geoPath().projection(this.projection);
+        const circle = d3.geoCircle().center([lon, lat]).radius(2);
 
-    this.currentIsolines.append("path")
-        .datum(circle())
-        .attr("d", pathGenerator)
-        .attr("class", "isolines");
+        this.currentIsolines.append("path")
+            .datum(circle())
+            .attr("d", pathGenerator)
+            .attr("class", "isolines");
 
-    // Add label
-    this.currentIsolines.append("text")
-        .attr("x", this.currentClickPoint.x + 10)  // FIXED: use .x property
-        .attr("y", this.currentClickPoint.y - 10)  // FIXED: use .y property
-        .attr("class", "isolines-label")
-        .text(`${currentValue.toFixed(field === 'totalfield' ? 0 : 1)}`);
-},
+        // Add label
+        this.currentIsolines.append("text")
+            .attr("x", this.currentClickPoint.x + 10)  // FIXED: use .x property
+            .attr("y", this.currentClickPoint.y - 10)  // FIXED: use .y property
+            .attr("class", "isolines-label")
+            .text(`${currentValue.toFixed(field === 'totalfield' ? 0 : 1)}`);
+    },
+
     // --- Manual Marching Squares Implementation ---
     drawContourLayer: function(container, pathGenerator, gridData, options) {
         const { step, domain, colorFunc, majorMultiplier, labelCondition } = options;
@@ -533,7 +559,6 @@ const MagMapApp = {
             const lines = [];
             for (let y = 0; y < gridData.height - 1; y++) {
                 for (let x = 0; x < gridData.width - 1; x++) {
-
                     const nw_val = gridData.values[y * gridData.width + x];
                     const ne_val = gridData.values[y * gridData.width + x + 1];
                     const sw_val = gridData.values[(y + 1) * gridData.width + x];
@@ -572,7 +597,7 @@ const MagMapApp = {
             }
 
             if (lines.length > 0) {
-                 const geoJson = {
+                const geoJson = {
                     type: "MultiLineString",
                     coordinates: lines.map(line => {
                         const start = toGeo(line[0]);
@@ -730,7 +755,6 @@ function addLegend(svgId, legendItems) {
             .text(item.text);
     });
 }
-
 function loadModelIntoInstance(geomagInstance, cofFileContent) {
     try {
         geomagInstance.modelData = cofFileContent.split(/\r?\n/);
@@ -841,10 +865,10 @@ async function calculateDipPoles(geomagInstance, epoch, altitudeKm) {
             }
         }
         let searchRadius = 5, searchStep = 1;
-        for(let i=0; i<3; i++) {
-            for(let latAbs = Math.max(0, bestPoint.latAbs - searchRadius); latAbs <= Math.min(180, bestPoint.latAbs + searchRadius); latAbs += searchStep) {
+        for (let i = 0; i < 3; i++) {
+            for (let latAbs = Math.max(0, bestPoint.latAbs - searchRadius); latAbs <= Math.min(180, bestPoint.latAbs + searchRadius); latAbs += searchStep) {
                 let lat = 90 - latAbs;
-                for(let lonAbs = Math.max(0, bestPoint.lonAbs - searchRadius); lonAbs <= Math.min(360, bestPoint.lonAbs + searchRadius); lonAbs += searchStep) {
+                for (let lonAbs = Math.max(0, bestPoint.lonAbs - searchRadius); lonAbs <= Math.min(360, bestPoint.lonAbs + searchRadius); lonAbs += searchStep) {
                     let lon = lonAbs - 180;
                     const tempGeomag = new Geomag();
                     tempGeomag.modelData = geomagInstance.modelData;
@@ -867,7 +891,8 @@ async function calculateDipPoles(geomagInstance, epoch, altitudeKm) {
                     }
                 }
             }
-            searchRadius /= 2; searchStep /= 2;
+            searchRadius /= 2;
+            searchStep /= 2;
         }
         return bestPoint;
     };
@@ -902,13 +927,13 @@ function drawGraticules(clippedContainer, unclippedContainer, projection, pathGe
         .style("font-size", "10px")
         .style("fill", "#333");
 
-    const bounds = pathGenerator.bounds({type: "Sphere"});
+    const bounds = pathGenerator.bounds({ type: "Sphere" });
     const left = bounds[0][0], top = bounds[0][1], right = bounds[1][0], bottom = bounds[1][1];
 
     // Longitude labels (-180° to +180°)
     for (let lon = -180; lon <= 180; lon += 30) {
         const point = projection([lon, 0]);
-        if(point) {
+        if (point) {
             const label = lon === 0 ? "0°" : lon > 0 ? `${lon}°E` : `${Math.abs(lon)}°W`;
             graticuleGroup.append("text")
                 .attr("x", point[0])
@@ -923,9 +948,9 @@ function drawGraticules(clippedContainer, unclippedContainer, projection, pathGe
 
     // Latitude labels (-90° to +90°)
     for (let lat = -90; lat <= 90; lat += 30) {
-        if(lat === 0) continue; // Skip equator (0°) to avoid clutter
+        if (lat === 0) continue; // Skip equator (0°) to avoid clutter
         const point = projection([0, lat]);
-        if(point) {
+        if (point) {
             const label = lat > 0 ? `${lat}°N` : `${Math.abs(lat)}°S`;
             graticuleGroup.append("text")
                 .attr("x", left - 20)
