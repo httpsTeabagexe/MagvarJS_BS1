@@ -275,16 +275,15 @@ const MagMapApp = {
             this.updateStatus('Calculating blackout zones...', false);
             const hGridData = this.generateGridData(commonArgs, 'h');
 
-            // --- START: Diagnostic Logging ---
-            const hValues = hGridData.values;
-            const minH = Math.min(...hValues);
-            const maxH = Math.max(...hValues);
-            const valuesBelow6k = hValues.filter(v => v < 6000).length;
-            console.log(`[DEBUG] H-Field Range: ${minH.toFixed(0)} nT to ${maxH.toFixed(0)} nT`);
-            console.log(`[DEBUG] Grid points with H < 6000 nT: ${valuesBelow6k} / ${hValues.length}`);
-            // --- END: Diagnostic Logging ---
+            // --- START: NEW PADDING FIX ---
+            // Create a new grid with a border of "safe" H-values (e.g., 100,000 nT).
+            // This encloses the polar zones so the contour algorithm can handle them.
+            const paddedGrid = this.createPaddedGrid(hGridData, 100000);
 
-            this.drawBlackoutZones(clippedGroup, pathGenerator, hGridData);
+            // Pass the NEW padded grid to the drawing function.
+            this.drawBlackoutZones(clippedGroup, pathGenerator, paddedGrid);
+            // --- END: NEW PADDING FIX ---
+
 
             // Add new legend items
             legend.push({ color: "rgba(255, 165, 0, 0.4)", text: "Caution Zone (H < 6000 nT)" });
@@ -627,20 +626,28 @@ const MagMapApp = {
         }
     },
 
-// --- FINAL, ROBUST FIX for Blackout Zones ---
-drawBlackoutZones: function(container, pathGenerator, gridData) {
+// --- FINAL ROBUST FIX using Padded Grid and Erase Method ---
+drawBlackoutZones: function(container, pathGenerator, paddedGridData) {
     const zones = [
-        // Define zones from most restrictive to least, so they draw correctly
-        { threshold: 2000, color: "rgba(255, 0, 0, 0.5)", class: "unreliable-zone" }, // Unreliable Zone (H < 2000 nT)
-        { threshold: 6000, color: "rgba(255, 165, 0, 0.4)", class: "caution-zone" }   // Caution Zone (H < 6000 nT)
+        { threshold: 2000, color: "rgba(255, 0, 0, 0.5)", class: "unreliable-zone" },
+        { threshold: 6000, color: "rgba(255, 165, 0, 0.4)", class: "caution-zone" }
     ];
+
+    const { values: paddedValues, width: paddedWidth, height: paddedHeight } = paddedGridData;
+    const originalWidth = paddedWidth - 2;
+    const originalHeight = paddedHeight - 2;
 
     const geoTransform = (geometry) => {
         const transformPoint = (point) => {
-            const lon = (point[0] / (gridData.width - 1)) * 360 - 180;
-            const lat = 90 - (point[1] / (gridData.height - 1)) * 180;
+            // Adjust coordinates to account for the 1-pixel padding
+            const originalX = point[0] - 1;
+            const originalY = point[1] - 1;
+
+            const lon = (originalX / (originalWidth - 1)) * 360 - 180;
+            const lat = 90 - (originalY / (originalHeight - 1)) * 180;
             return [lon, lat];
         };
+
         const newGeometry = { type: geometry.type, coordinates: [] };
         if (geometry.type === 'Polygon') {
             newGeometry.coordinates = geometry.coordinates.map(ring => ring.map(transformPoint));
@@ -650,41 +657,29 @@ drawBlackoutZones: function(container, pathGenerator, gridData) {
         return newGeometry;
     };
 
-    // Note: We use the map's background color for erasing.
     const mapBackgroundColor = d3.select("#geomag-map").style("background-color");
 
     zones.forEach(zone => {
-        // STEP 1: Fill the ENTIRE map with the unsafe zone color.
+        // Step 1: Fill the entire map with the unsafe color.
         container.append("path")
             .datum({ type: "Sphere" })
-            .attr("class", `${zone.class}-fill`)
             .attr("d", pathGenerator)
             .style("fill", zone.color);
 
-        // STEP 2: Calculate the contours for the SAFE areas (where H >= threshold).
-        // We use the original H data and a positive threshold.
+        // Step 2: Find the contours of the SAFE areas on the PADDED grid.
         const safeContours = d3.contours()
-            .size([gridData.width, gridData.height])
-            .thresholds([zone.threshold]); // Positive threshold
+            .size([paddedWidth, paddedHeight])
+            .thresholds([zone.threshold]);
 
-        const safeContourObjects = safeContours(gridData.values); // Use original gridData.values
+        const safeGeometries = safeContours(paddedValues).map(geoTransform);
 
-        // STEP 3: Transform the "safe" polygons.
-        const safeGeometries = safeContourObjects.map(geoTransform);
-
-        // (Optional but good practice) Filter out any inverse polygons from the "safe" areas.
-        const MAX_AREA = 2 * Math.PI;
-        const filteredSafeGeometries = safeGeometries.filter(geom => d3.geoArea(geom) < MAX_AREA);
-
-        // STEP 4: Draw the SAFE zones on top using the background color to "erase" them.
+        // Step 3: Draw the safe zones using the background color to "erase".
         container.append("g")
-            .attr("class", `${zone.class}-mask`)
             .selectAll("path")
-            .data(filteredSafeGeometries)
+            .data(safeGeometries)
             .enter().append("path")
             .attr("d", pathGenerator)
-            .style("fill", mapBackgroundColor) // Use the map's background color here
-            .style("stroke", "none");
+            .style("fill", mapBackgroundColor);
     });
 },
 
@@ -739,6 +734,28 @@ drawBlackoutZones: function(container, pathGenerator, gridData) {
             kernel[i] /= sum;
         }
         return kernel;
+    },
+
+    // --- NEW HELPER: Creates a padded grid to handle pole/edge cases ---
+    createPaddedGrid: function(gridData, paddingValue) {
+        const { values, width, height } = gridData;
+        const paddedWidth = width + 2;
+        const paddedHeight = height + 2;
+        const paddedValues = new Float32Array(paddedWidth * paddedHeight);
+
+        // 1. Fill the new, larger grid with a "safe" padding value.
+        paddedValues.fill(paddingValue);
+
+        // 2. Copy the original data into the center of the padded grid.
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const originalIndex = y * width + x;
+                const paddedIndex = (y + 1) * paddedWidth + (x + 1);
+                paddedValues[paddedIndex] = values[originalIndex];
+            }
+        }
+
+        return { values: paddedValues, width: paddedWidth, height: paddedHeight };
     },
 
     addLegend, loadModelIntoInstance, generateGridData, calculateDipPoles, drawGraticules
