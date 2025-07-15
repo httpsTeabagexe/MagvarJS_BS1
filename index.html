@@ -80,6 +80,42 @@
             color: #555;
         }
     </style>
+    <style>
+        .coordinate-info {
+            position: absolute;
+            background: white;
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            z-index: 100;
+            max-width: 300px;
+            display: none;
+            font-size: 14px;
+        }
+        .isolines {
+            stroke: #333;
+            stroke-width: 1.5;
+            stroke-dasharray: 5,5;
+            fill: none;
+        }
+        .isolines-label {
+            font-size: 10px;
+            fill: #333;
+            font-weight: bold;
+        }
+        .close-btn {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            padding: 0 5px;
+        }
+        .close-btn:hover {
+            color: #ff0000;
+        }
+    </style>
     <!-- Use local copies instead of CDN -->
     <script src="libs/d3.min.js"></script>
     <script src="libs/topojson.min.js"></script>

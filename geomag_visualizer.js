@@ -1,4 +1,3 @@
-
 // --- Marching Squares Helper Functions ---
 function lerp(threshold, p1_val, p2_val) {
     // Avoid division by zero
@@ -39,13 +38,31 @@ const MagMapApp = {
     isSmoothingEnabled: true, // Control for interpolation/smoothing
     isUncertaintyVisible: false, // Control for uncertainty zones visibility
 
+    clickInfoWindow: null,
+    currentClickPoint: null,
+    currentIsolines: null,
+
     // --- Main Initializer ---
     init: function() {
-        document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', () => {
+        console.log("Initializing...");
+        console.log("D3 version:", d3.version);
+        try {
+            // Initialize click info window
+            this.clickInfoWindow = d3.select("body").append("div")
+                .attr("class", "coordinate-info")
+                .style("position", "absolute")
+                .style("display", "none");
+
             this.setupUIListeners();
-            this.initializeGeomag();
-        });
-    },
+            this.initializeGeomag().then(() => {
+                console.log("Geomag initialized, projection should be available after first render");
+            });
+        } catch (error) {
+            console.error("Initialization error:", error);
+        }
+    });
+},
 
     // --- Helper: Updates the uncertainty button's state and appearance ---
     updateUncertaintyButtonState: function() {
@@ -91,6 +108,12 @@ const MagMapApp = {
 
         // Set the initial state of the button
         this.updateUncertaintyButtonState();
+
+        document.addEventListener('click', (e) => {
+        if (!e.target.closest('#geomag-map') && !e.target.closest('.coordinate-info')) {
+            this.clickInfoWindow.style("display", "none");
+            }
+        });
     },
 
     updateStatus: function(message, isError = false) {
@@ -245,15 +268,28 @@ const MagMapApp = {
     drawBaseMap: function(svgId, landFeatures, sphereFeature, title, dipPoles) {
         const { mapWidth, mapHeight } = this.config;
         const svg = d3.select(`#${svgId}`);
-        svg.selectAll("*").remove();
+        // Store projection as instance variable
+        this.projection = d3.geoMiller().fitSize([mapWidth - 40, mapHeight - 40], sphereFeature);
+        const pathGenerator = d3.geoPath(this.projection);
+
+        // Remove any existing click handlers first
+        svg.on("click", null);
+
+        // Create info window div if it doesn't exist
+        if (!this.clickInfoWindow) {
+            this.clickInfoWindow = d3.select("body").append("div")
+                .attr("class", "coordinate-info")
+                .style("position", "absolute")
+                .style("display", "none");
+        }
 
         svg.attr("width", mapWidth).attr("height", mapHeight)
            .attr("viewBox", [0, 0, mapWidth, mapHeight])
            .style("background-color", "#e0f3ff");
 
         const padding = 40;
-        const projection = d3.geoMiller().fitSize([mapWidth - padding, mapHeight - padding], sphereFeature);
-        const pathGenerator = d3.geoPath(projection);
+        // const projection = d3.geoMiller().fitSize([mapWidth - padding, mapHeight - padding], sphereFeature);
+        // const pathGenerator = d3.geoPath(projection);
 
         const clipPathId = `${svgId}-clip-path`;
         svg.append("defs").append("clipPath")
@@ -266,7 +302,7 @@ const MagMapApp = {
             .attr("id", `${svgId}-clipped-group`)
             .attr("clip-path", `url(#${clipPathId})`);
 
-        this.drawGraticules(clippedGroup, svg, projection, pathGenerator);
+        this.drawGraticules(clippedGroup, svg, this.projection, pathGenerator);
 
         clippedGroup.append("path")
             .datum(landFeatures)
@@ -288,14 +324,192 @@ const MagMapApp = {
 
         if (dipPoles) {
             svg.selectAll("text.dip-pole").data(dipPoles).enter().append("text")
-                .attr("transform", d => `translate(${projection([d.lon, d.lat])})`)
+                .attr("transform", d => `translate(${this.projection([d.lon, d.lat])})`)
                 .style("fill", "black").style("font-size", "24px").style("text-anchor", "middle").attr("dy", ".35em")
                 .style("paint-order", "stroke").style("stroke", "white").style("stroke-width", "2px")
                 .text("✱");
         }
-        return { projection, pathGenerator, clippedGroup };
+
+        // Add robust click handler using stored projection
+        svg.on("click", function() {
+            try {
+                let x, y;
+                if (typeof d3.pointer === 'function') {
+                    [x, y] = d3.pointer(d3.event);
+                } else {
+                    const coords = d3.mouse(this);
+                    x = coords[0];
+                    y = coords[1];
+                }
+                MagMapApp.handleMapClick(x, y, MagMapApp.projection);
+            } catch (error) {
+                console.error("Error handling click event:", error);
+            }
+        });
+    return { projection: this.projection, pathGenerator, clippedGroup };
+},
+    handleMapClick: function(x, y, projection) {
+    if (!projection || typeof projection.invert !== 'function') {
+        console.error("Projection not properly initialized");
+        return;
+    }
+    // Clear previous elements
+    this.clearClickElements();
+    try {
+        // Convert pixel coordinates to geographic coordinates
+        const coords = projection.invert([x, y]);
+        if (!coords || coords.some(isNaN)) {
+            console.error("Invalid coordinates:", coords);
+            return;
+        }
+        console.log("Clicked at:", {x, y, lon: coords[0], lat: coords[1]});
+        this.currentClickPoint = {x, y, lon: coords[0], lat: coords[1]};
+        // Get geomagnetic data for this point
+        const field = this.getFieldAtPoint(coords);
+        if (!field) {
+            console.error("Failed to get field data");
+            return;
+        }
+        // Show info window
+        this.showCoordinateInfo(x, y, coords, field);
+        // Draw isolines from this point
+        this.drawIsolinesFromPoint(coords, field);
+    } catch (error) {
+        console.error("Error handling map click:", error);
+    }
+},
+
+    // --- Helper: Clears the info window and isolines on the map ---
+    clearClickElements: function() {
+        // Hide info window
+        if (this.clickInfoWindow) {
+            this.clickInfoWindow.style("display", "none");
+        }
+
+        // Remove previous isolines
+        if (this.currentIsolines) {
+            this.currentIsolines.remove();
+            this.currentIsolines = null;
+        }
     },
 
+    // --- Retrieves the geomagnetic field components at a specific geographic coordinate ---
+    getFieldAtPoint: function(coords) {
+        const [lon, lat] = coords;
+        const currentEpoch = parseFloat(document.getElementById('epochInput').value);
+        const currentAltitude = parseFloat(document.getElementById('altitudeInput').value);
+        const field = document.getElementById('fieldSelect').value;
+
+        const pointGeomag = new Geomag();
+        pointGeomag.modelData = this.geomagInstance.modelData;
+        Object.assign(pointGeomag, {
+            model: this.geomagInstance.model.slice(),
+            nmodel: this.geomagInstance.nmodel,
+            epoch: this.geomagInstance.epoch.slice(),
+            yrmin: this.geomagInstance.yrmin.slice(),
+            yrmax: this.geomagInstance.yrmax.slice(),
+            altmin: this.geomagInstance.altmin.slice(),
+            altmax: this.geomagInstance.altmax.slice(),
+            max1: this.geomagInstance.max1.slice(),
+            max2: this.geomagInstance.max2.slice(),
+            max3: this.geomagInstance.max3.slice(),
+            irec_pos: this.geomagInstance.irec_pos.slice()
+        });
+
+        return pointGeomag.getFieldComponents(currentEpoch, this.config.igdgc, currentAltitude, lat, lon);
+    },
+
+    // --- Displays the coordinate information in the info window ---
+    showCoordinateInfo: function(x, y, coords, fieldData) {
+        try {
+            const [lon, lat] = coords;
+            const field = document.getElementById('fieldSelect').value;
+
+            if (!fieldData || isNaN(lon) || isNaN(lat)) {
+                console.error("Invalid data for info window");
+                return;
+            }
+
+            let fieldValue, fieldName;
+            if (field === 'declination') {
+                fieldValue = fieldData.d_deg?.toFixed(2) + '°' || 'N/A';
+                fieldName = 'Declination';
+            } else if (field === 'inclination') {
+                fieldValue = fieldData.i_deg?.toFixed(2) + '°' || 'N/A';
+                fieldName = 'Inclination';
+            } else {
+                fieldValue = fieldData.f?.toFixed(0) + ' nT' || 'N/A';
+                fieldName = 'Total Field';
+            }
+
+            const html = `
+                <div><strong>Coordinates:</strong> ${lat.toFixed(2)}°${lat >= 0 ? 'N' : 'S'}, ${lon.toFixed(2)}°${lon >= 0 ? 'E' : 'W'}</div>
+                <div><strong>${fieldName}:</strong> ${fieldValue}</div>
+                <div><strong>Horizontal (H):</strong> ${fieldData.h?.toFixed(0) || 'N/A'} nT</div>
+                <div><strong>North (X):</strong> ${fieldData.x?.toFixed(0) || 'N/A'} nT</div>
+                <div><strong>East (Y):</strong> ${fieldData.y?.toFixed(0) || 'N/A'} nT</div>
+                <div><strong>Down (Z):</strong> ${fieldData.z?.toFixed(0) || 'N/A'} nT</div>
+                <div class="close-btn">✕</div>
+            `;
+
+            const infoWindow = this.clickInfoWindow
+                .html(html)
+                .style("left", `${x + 20}px`)
+                .style("top", `${y + 20}px`)
+                .style("display", "block");
+
+            // Add close button handler
+            infoWindow.select(".close-btn")
+                .on("click", () => {
+                    this.clearClickElements();
+                });
+
+        } catch (error) {
+            console.error("Error showing coordinate info:", error);
+        }
+},
+
+    drawIsolinesFromPoint: function(coords) {
+        const svg = d3.select("#geomag-map");
+
+        // Remove previous isolines
+        if (this.currentIsolines) {
+            this.currentIsolines.remove();
+        }
+
+        const [lon, lat] = coords;
+        const field = document.getElementById('fieldSelect').value;
+        const currentValue = this.getFieldAtPoint(coords)[field === 'declination' ? 'd_deg' :
+                                                        field === 'inclination' ? 'i_deg' : 'f'];
+
+        // Create a group for isolines
+        this.currentIsolines = svg.append("g").attr("class", "isolines-group");
+
+        // Draw circle around the point
+        this.currentIsolines.append("circle")
+            .attr("cx", this.currentClickPoint[0])
+            .attr("cy", this.currentClickPoint[1])
+            .attr("r", 5)
+            .attr("fill", "red")
+            .attr("stroke", "white")
+            .attr("stroke-width", 1);
+
+        // Draw isoline (this is simplified - you might want to implement proper isoline calculation)
+        const pathGenerator = d3.geoPath().projection(this.projection);
+        const circle = d3.geoCircle().center([lon, lat]).radius(2);
+
+        this.currentIsolines.append("path")
+            .datum(circle())
+            .attr("d", pathGenerator)
+            .attr("class", "isolines");
+
+        // Add label
+        this.currentIsolines.append("text")
+            .attr("x", this.currentClickPoint[0] + 10)
+            .attr("y", this.currentClickPoint[1] - 10)
+            .attr("class", "isolines-label")
+            .text(`${currentValue.toFixed(field === 'totalfield' ? 0 : 1)}`);
+    },
     // --- Manual Marching Squares Implementation ---
     drawContourLayer: function(container, pathGenerator, gridData, options) {
         const { step, domain, colorFunc, majorMultiplier, labelCondition } = options;
