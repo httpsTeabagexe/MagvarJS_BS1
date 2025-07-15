@@ -470,46 +470,46 @@ const MagMapApp = {
 },
 
     drawIsolinesFromPoint: function(coords) {
-        const svg = d3.select("#geomag-map");
+    const svg = d3.select("#geomag-map");
 
-        // Remove previous isolines
-        if (this.currentIsolines) {
-            this.currentIsolines.remove();
-        }
+    // Remove previous isolines
+    if (this.currentIsolines) {
+        this.currentIsolines.remove();
+    }
 
-        const [lon, lat] = coords;
-        const field = document.getElementById('fieldSelect').value;
-        const currentValue = this.getFieldAtPoint(coords)[field === 'declination' ? 'd_deg' :
-                                                        field === 'inclination' ? 'i_deg' : 'f'];
+    const [lon, lat] = coords;
+    const field = document.getElementById('fieldSelect').value;
+    const currentValue = this.getFieldAtPoint(coords)[field === 'declination' ? 'd_deg' :
+                                                    field === 'inclination' ? 'i_deg' : 'f'];
 
-        // Create a group for isolines
-        this.currentIsolines = svg.append("g").attr("class", "isolines-group");
+    // Create a group for isolines
+    this.currentIsolines = svg.append("g").attr("class", "isolines-group");
 
-        // Draw circle around the point
-        this.currentIsolines.append("circle")
-            .attr("cx", this.currentClickPoint[0])
-            .attr("cy", this.currentClickPoint[1])
-            .attr("r", 5)
-            .attr("fill", "red")
-            .attr("stroke", "white")
-            .attr("stroke-width", 1);
+    // Draw circle around the point
+    this.currentIsolines.append("circle")
+        .attr("cx", this.currentClickPoint.x)  // FIXED: use .x property
+        .attr("cy", this.currentClickPoint.y)  // FIXED: use .y property
+        .attr("r", 5)
+        .attr("fill", "red")
+        .attr("stroke", "white")
+        .attr("stroke-width", 1);
 
-        // Draw isoline (this is simplified - you might want to implement proper isoline calculation)
-        const pathGenerator = d3.geoPath().projection(this.projection);
-        const circle = d3.geoCircle().center([lon, lat]).radius(2);
+    // Draw isoline
+    const pathGenerator = d3.geoPath().projection(this.projection);
+    const circle = d3.geoCircle().center([lon, lat]).radius(2);
 
-        this.currentIsolines.append("path")
-            .datum(circle())
-            .attr("d", pathGenerator)
-            .attr("class", "isolines");
+    this.currentIsolines.append("path")
+        .datum(circle())
+        .attr("d", pathGenerator)
+        .attr("class", "isolines");
 
-        // Add label
-        this.currentIsolines.append("text")
-            .attr("x", this.currentClickPoint[0] + 10)
-            .attr("y", this.currentClickPoint[1] - 10)
-            .attr("class", "isolines-label")
-            .text(`${currentValue.toFixed(field === 'totalfield' ? 0 : 1)}`);
-    },
+    // Add label
+    this.currentIsolines.append("text")
+        .attr("x", this.currentClickPoint.x + 10)  // FIXED: use .x property
+        .attr("y", this.currentClickPoint.y - 10)  // FIXED: use .y property
+        .attr("class", "isolines-label")
+        .text(`${currentValue.toFixed(field === 'totalfield' ? 0 : 1)}`);
+},
     // --- Manual Marching Squares Implementation ---
     drawContourLayer: function(container, pathGenerator, gridData, options) {
         const { step, domain, colorFunc, majorMultiplier, labelCondition } = options;
