@@ -274,6 +274,16 @@ const MagMapApp = {
         if (this.isUncertaintyVisible && (field === 'declination' || field === 'inclination')) {
             this.updateStatus('Calculating blackout zones...', false);
             const hGridData = this.generateGridData(commonArgs, 'h');
+
+            // --- START: Diagnostic Logging ---
+            const hValues = hGridData.values;
+            const minH = Math.min(...hValues);
+            const maxH = Math.max(...hValues);
+            const valuesBelow6k = hValues.filter(v => v < 6000).length;
+            console.log(`[DEBUG] H-Field Range: ${minH.toFixed(0)} nT to ${maxH.toFixed(0)} nT`);
+            console.log(`[DEBUG] Grid points with H < 6000 nT: ${valuesBelow6k} / ${hValues.length}`);
+            // --- END: Diagnostic Logging ---
+
             this.drawBlackoutZones(clippedGroup, pathGenerator, hGridData);
 
             // Add new legend items
@@ -617,47 +627,66 @@ const MagMapApp = {
         }
     },
 
-    // --- UPDATED: Function to draw Blackout Zones with two levels ---
-    drawBlackoutZones: function(container, pathGenerator, gridData) {
-        // Define the zones. They are drawn in order, so the more critical (smaller threshold)
-        // zone should come last to be drawn on top.
-        const zones = [
-            { threshold: 6000, color: "rgba(255, 165, 0, 0.4)", class: "caution-zone" },  // Caution Zone (0-6000 nT)
-            { threshold: 2000, color: "rgba(255, 0, 0, 0.5)", class: "unreliable-zone" } // Unreliable Zone (0-2000 nT)
-        ];
+// --- FINAL, ROBUST FIX for Blackout Zones ---
+drawBlackoutZones: function(container, pathGenerator, gridData) {
+    const zones = [
+        // Define zones from most restrictive to least, so they draw correctly
+        { threshold: 2000, color: "rgba(255, 0, 0, 0.5)", class: "unreliable-zone" }, // Unreliable Zone (H < 2000 nT)
+        { threshold: 6000, color: "rgba(255, 165, 0, 0.4)", class: "caution-zone" }   // Caution Zone (H < 6000 nT)
+    ];
 
-        const invertedValues = gridData.values.map(v => -v);
-
-        const geoTransform = ({type, value, coordinates}) => {
-            return {
-                type, value,
-                coordinates: coordinates.map(ring =>
-                    ring.map(point => {
-                        const lon = (point[0] / (gridData.width - 1)) * 360 - 180;
-                        const lat = 90 - (point[1] / (gridData.height - 1)) * 180;
-                        return [lon, lat];
-                    })
-                )
-            };
+    const geoTransform = (geometry) => {
+        const transformPoint = (point) => {
+            const lon = (point[0] / (gridData.width - 1)) * 360 - 180;
+            const lat = 90 - (point[1] / (gridData.height - 1)) * 180;
+            return [lon, lat];
         };
+        const newGeometry = { type: geometry.type, coordinates: [] };
+        if (geometry.type === 'Polygon') {
+            newGeometry.coordinates = geometry.coordinates.map(ring => ring.map(transformPoint));
+        } else if (geometry.type === 'MultiPolygon') {
+            newGeometry.coordinates = geometry.coordinates.map(polygon => polygon.map(ring => ring.map(transformPoint)));
+        }
+        return newGeometry;
+    };
 
-        zones.forEach(zone => {
-            const contours = d3.contours()
-                .size([gridData.width, gridData.height])
-                .thresholds([-zone.threshold]); // Find where -H > -threshold => H < threshold
+    // Note: We use the map's background color for erasing.
+    const mapBackgroundColor = d3.select("#geomag-map").style("background-color");
 
-            const contourGeoJson = contours(invertedValues);
+    zones.forEach(zone => {
+        // STEP 1: Fill the ENTIRE map with the unsafe zone color.
+        container.append("path")
+            .datum({ type: "Sphere" })
+            .attr("class", `${zone.class}-fill`)
+            .attr("d", pathGenerator)
+            .style("fill", zone.color);
 
-            container.append("g")
-                .attr("class", zone.class)
-                .selectAll("path")
-                .data(contourGeoJson.map(geoTransform))
-                .enter().append("path")
-                  .attr("d", pathGenerator)
-                  .style("fill", zone.color)
-                  .style("stroke", "none");
-        });
-    },
+        // STEP 2: Calculate the contours for the SAFE areas (where H >= threshold).
+        // We use the original H data and a positive threshold.
+        const safeContours = d3.contours()
+            .size([gridData.width, gridData.height])
+            .thresholds([zone.threshold]); // Positive threshold
+
+        const safeContourObjects = safeContours(gridData.values); // Use original gridData.values
+
+        // STEP 3: Transform the "safe" polygons.
+        const safeGeometries = safeContourObjects.map(geoTransform);
+
+        // (Optional but good practice) Filter out any inverse polygons from the "safe" areas.
+        const MAX_AREA = 2 * Math.PI;
+        const filteredSafeGeometries = safeGeometries.filter(geom => d3.geoArea(geom) < MAX_AREA);
+
+        // STEP 4: Draw the SAFE zones on top using the background color to "erase" them.
+        container.append("g")
+            .attr("class", `${zone.class}-mask`)
+            .selectAll("path")
+            .data(filteredSafeGeometries)
+            .enter().append("path")
+            .attr("d", pathGenerator)
+            .style("fill", mapBackgroundColor) // Use the map's background color here
+            .style("stroke", "none");
+    });
+},
 
     // --- Data Smoothing Helpers ---
     applyGaussianBlur: function(data, width, height, radius) {
