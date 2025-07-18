@@ -788,4 +788,3 @@ const MagMapApp = {
     }
 };
 MagMapApp.init();
-//# sourceMappingURL=geomag_visualizer.js.map
