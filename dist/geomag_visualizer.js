@@ -8,7 +8,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import * as d3 from 'd3';
-import { feature as topojsonFeature } from 'topojson-client';
+import { feature as TOPOJSON_FEATURE } from 'topojson-client';
 // --- Marching Squares Helper Functions ---
 function LERP(threshold, p1_val, p2_val) {
     if (p2_val - p1_val === 0)
@@ -48,7 +48,7 @@ const K_MAG_MAP_APP = {
     currentClickPoint: null,
     currentIsolines: null,
     // --- Main Initializer ---
-    init: function () {
+    INIT: function () {
         document.addEventListener('DOMContentLoaded', () => {
             console.log("Initializing...");
             try {
@@ -210,7 +210,7 @@ const K_MAG_MAP_APP = {
                 this.UPD_STATUS("Error: Invalid world atlas data.", true);
                 return;
             }
-            const land = topojsonFeature(world, world.objects.countries);
+            const land = TOPOJSON_FEATURE(world, world.objects.countries);
             const sphere = { type: "Sphere" };
             const dipPoles = yield this.CALCULATE_DIP_POLES();
             const commonArgs = { geomagInstance, epoch: currentEpoch, altitudeKm: currentAltitude };
@@ -534,13 +534,13 @@ const K_MAG_MAP_APP = {
         const { values: paddedValues, width: paddedWidth, height: paddedHeight } = paddedGridData;
         const originalWidth = paddedWidth - 2;
         const originalHeight = paddedHeight - 2;
-        const geoTransform = (geometry) => {
-            const transformPoint = (point) => {
+        const GEO_TRANSFORM = (geometry) => {
+            const TRANSFORM_POINT = (point) => {
                 const lon = ((point[0] - 1) / (originalWidth - 1)) * 360 - 180;
                 const lat = 90 - ((point[1] - 1) / (originalHeight - 1)) * 180;
                 return [lon, lat];
             };
-            const newCoordinates = geometry.coordinates.map((polygon) => polygon.map((ring) => ring.map(transformPoint)));
+            const newCoordinates = geometry.coordinates.map((polygon) => polygon.map((ring) => ring.map(TRANSFORM_POINT)));
             return { type: "MultiPolygon", coordinates: newCoordinates, value: geometry.value };
         };
         const mapBackgroundColor = d3.select("#geomag-map").style("background-color");
@@ -548,7 +548,7 @@ const K_MAG_MAP_APP = {
             container.append("path").datum({ type: "Sphere" }).attr("d", pathGenerator).style("fill", zone.color);
             const safeContours = d3.contours().size([paddedWidth, paddedHeight]).thresholds([zone.threshold]);
             // Convert Float32Array to Array for d3.contours
-            const safeGeometries = safeContours(Array.from(paddedValues)).map(geoTransform);
+            const safeGeometries = safeContours(Array.from(paddedValues)).map(GEO_TRANSFORM);
             container.append("g").selectAll("path").data(safeGeometries).enter().append("path")
                 .attr("d", pathGenerator).style("fill", mapBackgroundColor);
         });
@@ -787,4 +787,4 @@ const K_MAG_MAP_APP = {
         graticuleGroup.selectAll("text").style("text-anchor", "middle").attr("dy", ".35em");
     }
 };
-K_MAG_MAP_APP.init();
+K_MAG_MAP_APP.INIT();

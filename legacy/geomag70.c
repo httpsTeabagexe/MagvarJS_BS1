@@ -98,7 +98,7 @@
 /****************************************************************************/
 /*                                                                          */
 /*      Subroutines called :  degrees_to_decimal,julday,getshc,interpsh,    */
-/*                            extrapsh,shval3,dihf,safegets                 */
+/*                            extrapsh,sh_val_3,dihf,safegets                 */
 /*                                                                          */
 /****************************************************************************/
 
@@ -366,7 +366,7 @@ int main(int argc, char**argv)
   double julday();
   int   interpsh();
   int   extrapsh();
-  int   shval3();
+  int   sh_val_3();
   int   dihf();
   int   safegets(char *buffer,int n);
   int getshc();
@@ -1158,10 +1158,10 @@ int main(int argc, char**argv)
       
       
       /* Do the first calculations */
-      shval3(loc_igdgc, loc_lat, loc_long, loc_alt, nmax, 3,
+      sh_val_3(loc_igdgc, loc_lat, loc_long, loc_alt, nmax, 3,
              IEXT, EXT_COEFF1, EXT_COEFF2, EXT_COEFF3);
       dihf(3);
-      shval3(loc_igdgc, loc_lat, loc_long, loc_alt, nmax, 4,
+      sh_val_3(loc_igdgc, loc_lat, loc_long, loc_alt, nmax, 4,
              IEXT, EXT_COEFF1, EXT_COEFF2, EXT_COEFF3);
       dihf(4);
       
@@ -1308,10 +1308,10 @@ int main(int argc, char**argv)
                       nmax = extrapsh(syr+1, epoch[modelI], max1[modelI],
                                       max2[modelI], 4);
                     }
-                  shval3(loc_igdgc, loc_lat, loc_long, loc_alt, nmax, 3,
+                  sh_val_3(loc_igdgc, loc_lat, loc_long, loc_alt, nmax, 3,
                          IEXT, EXT_COEFF1, EXT_COEFF2, EXT_COEFF3);
                   dihf(3);
-                  shval3(loc_igdgc, loc_lat, loc_long, loc_alt, nmax, 4,
+                  sh_val_3(loc_igdgc, loc_lat, loc_long, loc_alt, nmax, 4,
                          IEXT, EXT_COEFF1, EXT_COEFF2, EXT_COEFF3);
                   dihf(4);
                   
@@ -2073,7 +2073,7 @@ int interpsh(date, dte1, nmax1, dte2, nmax2, gh)
 
 /****************************************************************************/
 /*                                                                          */
-/*                           Subroutine shval3                              */
+/*                           Subroutine sh_val_3                              */
 /*                                                                          */
 /****************************************************************************/
 /*                                                                          */
@@ -2116,7 +2116,7 @@ int interpsh(date, dte1, nmax1, dte2, nmax2, gh)
 /****************************************************************************/
 
 
-int shval3(loc_igdgc, flat, flon, elev, nmax, gh, iext, ext1, ext2, ext3)
+int sh_val_3(loc_igdgc, flat, flon, elev, nmax, gh, iext, ext1, ext2, ext3)
      int   loc_igdgc;
      double flat;
      double flon;
@@ -2186,7 +2186,7 @@ int shval3(loc_igdgc, flat, flon, elev, nmax, gh, iext, ext1, ext2, ext3)
       ytemp = 0;
       ztemp = 0;
       break;
-    default: printf("\nError in subroutine shval3");
+    default: printf("\nError in subroutine sh_val_3");
       break;
     }
   sd = 0.0;
@@ -2264,7 +2264,7 @@ int shval3(loc_igdgc, flat, flon, elev, nmax, gh, iext, ext1, ext2, ext3)
           break;
         case 4:  aa = rr * ghb[l];
           break;
-        default: printf("\nError in subroutine shval3");
+        default: printf("\nError in subroutine sh_val_3");
           break;
         }
       if (m == 0)
@@ -2277,7 +2277,7 @@ int shval3(loc_igdgc, flat, flon, elev, nmax, gh, iext, ext1, ext2, ext3)
             case 4:  xtemp = xtemp + aa * q[k];
               ztemp = ztemp - aa * p[k];
               break;
-            default: printf("\nError in subroutine shval3");
+            default: printf("\nError in subroutine sh_val_3");
               break;
             }
           l = l + 1;
@@ -2317,7 +2317,7 @@ int shval3(loc_igdgc, flat, flon, elev, nmax, gh, iext, ext1, ext2, ext3)
                 }
               l = l + 2;
               break;
-            default: printf("\nError in subroutine shval3");
+            default: printf("\nError in subroutine sh_val_3");
               break;
             }
         }
@@ -2336,7 +2336,7 @@ int shval3(loc_igdgc, flat, flon, elev, nmax, gh, iext, ext1, ext2, ext3)
           ytemp = ytemp + ext2 * sl[1] - ext3 * cl[1];
           ztemp = ztemp + ext1 * slat + aa * clat;
           break;
-        default:  printf("\nError in subroutine shval3");
+        default:  printf("\nError in subroutine sh_val_3");
           break;
         }
     }
@@ -2350,7 +2350,7 @@ int shval3(loc_igdgc, flat, flon, elev, nmax, gh, iext, ext1, ext2, ext3)
 		xtemp = xtemp * cd + ztemp * sd;
 		ztemp = ztemp * cd - aa * sd;
 		break;
-    default:  printf("\nError in subroutine shval3");
+    default:  printf("\nError in subroutine sh_val_3");
 		break;
     }
   return(ios);

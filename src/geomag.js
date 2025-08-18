@@ -12,42 +12,49 @@
     // const fs = require('fs');
     // const prompt = require('prompt-sync')({ sigint: true });
 
-    // --- Глобальные константы с префиксом K_ ---
-    const K_FT2KM = 1.0 / 0.0003048; // Conversion factor: feet to kilometers
-    const K_RAD2DEG = 180.0 / Math.PI; // Conversion factor: radians to degrees
-    const K_DTR = Math.PI / 180.0; // Conversion factor: degrees to radians
-    const K_MAXMOD = 30; // Maximum number of models
-    const K_MAXDEG = 13; // Maximum degree
-    const K_MAXCOEFF = K_MAXDEG * (K_MAXDEG + 2) + 1; // +1 for 1-based indexing
+    // Import global constants
+    import { GL_FT_TO_KM, GL_RAD_TO_DEG, GL_DEG_TO_RAD, GL_MAX_MOD, GL_MAX_DEG, GL_MAX_COEFF } from './geomag_globals.js';
 
     /**
      * Класс для инкапсуляции состояния и логики геомагнитной модели.
      */
-    class Geomag {
+    class CL_GEOMAG {
         constructor() {
-            this.gh1 = new Array(K_MAXCOEFF).fill(0);
-            this.gh2 = new Array(K_MAXCOEFF).fill(0);
-            this.gha = new Array(K_MAXCOEFF).fill(0);
-            this.ghb = new Array(K_MAXCOEFF).fill(0);
-            this.d = 0; this.f = 0; this.h = 0; this.i = 0;
+            // Spherical harmonic coefficients for the main field (epoch)
+            this.gh1 = new Array(GL_MAX_COEFF).fill(0);
+            // Spherical harmonic coefficients for secular variation (annual change)
+            this.gh2 = new Array(GL_MAX_COEFF).fill(0);
+            // Temporary arrays for interpolated/extrapolated coefficients
+            this.gha = new Array(GL_MAX_COEFF).fill(0);
+            this.ghb = new Array(GL_MAX_COEFF).fill(0);
+            // Field elements (declination, total intensity, horizontal intensity, inclination)
+            this.d = 0;   // Declination (radians)
+            this.f = 0;   // Total field intensity (nT)
+            this.h = 0;   // Horizontal intensity (nT)
+            this.i = 0;   // Inclination (radians)
+            // Temporary field elements for secular variation calculations
             this.dtemp = 1; this.ftemp = 0; this.htemp = 0; this.itemp = 0;
+            // Field vector components (nT)
             this.x = 0; this.y = 0; this.z = 0;
+            // Temporary field vector components for secular variation
             this.xtemp = 0; this.ytemp = 0; this.ztemp = 0;
-            this.epoch = new Array(K_MAXMOD).fill(0);
-            this.yrmin = new Array(K_MAXMOD).fill(0);
-            this.yrmax = new Array(K_MAXMOD).fill(0);
-            this.altmin = new Array(K_MAXMOD).fill(0);
-            this.altmax = new Array(K_MAXMOD).fill(0);
-            this.max1 = new Array(K_MAXMOD).fill(0);
-            this.max2 = new Array(K_MAXMOD).fill(0);
-            this.max3 = new Array(K_MAXMOD).fill(0);
-            this.model = Array.from({ length: K_MAXMOD }, () => "");
-            this.irec_pos = new Array(K_MAXMOD).fill(0);
-            this.modelData = null;
-            this.nmodel = 0;
-            this.minyr = 0;
-            this.maxyr = 0;
-            this.mdfile = "";
+            // Model metadata arrays (per model)
+            this.epoch = new Array(GL_MAX_MOD).fill(0);   // Model epoch years
+            this.yrmin = new Array(GL_MAX_MOD).fill(0);   // Minimum valid year per model
+            this.yrmax = new Array(GL_MAX_MOD).fill(0);   // Maximum valid year per model
+            this.altmin = new Array(GL_MAX_MOD).fill(0);  // Minimum altitude per model (km)
+            this.altmax = new Array(GL_MAX_MOD).fill(0);  // Maximum altitude per model (km)
+            this.max1 = new Array(GL_MAX_MOD).fill(0);    // Maximum degree/order for main field
+            this.max2 = new Array(GL_MAX_MOD).fill(0);    // Maximum degree/order for secular variation
+            this.max3 = new Array(GL_MAX_MOD).fill(0);    // Reserved/unused or model-specific
+            this.model = Array.from({ length: GL_MAX_MOD }, () => ""); // Model names
+            this.irec_pos = new Array(GL_MAX_MOD).fill(0); // Record positions for model lookup
+            // Model data and file info
+            this.modelData = null; // Array of lines from the model file
+            this.nmodel = 0;       // Number of models loaded
+            this.minyr = 0;        // Earliest year supported by any model
+            this.maxyr = 0;        // Latest year supported by any model
+            this.mdfile = "";      // Model file name
         }
 
         /**
@@ -64,13 +71,13 @@
          * Load and parse model file headers to extract model parameters.
          * Optimized for compatibility: detects headers by 3+ leading spaces, parses as many fields as present, defaults missing to zero.
          */
-        loadModelFile(mdfile) {
+        loadModelFile(par_mdfile) {
             try {
-                this.mdfile = mdfile;
+                this.mdfile = par_mdfile;
                 const fileContent = fs.readFileSync(this.mdfile, 'utf8');
                 this.modelData = fileContent.split(/\r?\n/);
             } catch (e) {
-                console.log(`\nError opening file ${mdfile}.`);
+                console.log(`\nError opening file ${par_mdfile}.`);
                 return false;
             }
 
@@ -79,7 +86,7 @@
                 // Match C logic: header line starts with at least 3 spaces
                 if (/^\s{3,}/.test(line)) {
                     modelI++;
-                    if (modelI >= K_MAXMOD) {
+                    if (modelI >= GL_MAX_MOD) {
                         console.log(`Too many models in file ${this.mdfile} on line ${index + 1}.`);
                         process.exit(6);
                     }
@@ -106,7 +113,7 @@
             });
             this.nmodel = modelI + 1;
             if (this.nmodel === 0) {
-                console.log(`No valid model data found in ${mdfile}.`);
+                console.log(`No valid model data found in ${par_mdfile}.`);
                 return false;
             }
             return true;
@@ -238,29 +245,30 @@
         /**
          * Compute geomagnetic field vector components (X, Y, Z) using spherical harmonics.
          */
-        shval3(par_igdgc, par_f_lat, par_f_lon, par_elev, par_nmax, par_gh) {
-            const earths_radius = 6371.2;
-            const a2 = 40680631.59; /* WGS84 */
-            const b2 = 40408299.98; /* WGS84 */
-            const sl = new Array(14).fill(0);
-            const cl = new Array(14).fill(0);
-            const p = new Array(119).fill(0);
-            const q = new Array(119).fill(0);
+        sh_val_3(par_igdgc, par_f_lat, par_f_lon, par_elev, par_nmax, par_gh) {
+            // Import global constants
+            const { GL_EARTH_RADIUS, GL_A_SQUARED, GL_B_SQUARED, GL_DEG_TO_RAD } = require('./geomag_globals.js');
+            // Sine and cosine arrays for longitude multiples (used in spherical harmonics)
+            const K_SIN_LONG = new Array(14).fill(0); // Sine of longitude multiples
+            const K_COS_LONG = new Array(14).fill(0); // Cosine of longitude multiples
+            // Associated Legendre polynomial arrays (used in field computation)
+            const K_P = new Array(119).fill(0); // Legendre polynomials
+            const K_Q = new Array(119).fill(0); // Derivatives of Legendre polynomials
 
             let loc_r = par_elev;
-            let loc_s_lat = Math.sin(par_f_lat * K_DTR);
+            let loc_s_lat = Math.sin(par_f_lat * GL_DEG_TO_RAD);
             let loc_c_lat;
 
             if (Math.abs(90.0 - par_f_lat) < 0.001) {
-                loc_c_lat = Math.cos(89.999 * K_DTR);
+                loc_c_lat = Math.cos(89.999 * GL_DEG_TO_RAD);
             } else if (Math.abs(90.0 + par_f_lat) < 0.001) {
-                loc_c_lat = Math.cos(-89.999 * K_DTR);
+                loc_c_lat = Math.cos(-89.999 * GL_DEG_TO_RAD);
             } else {
-                loc_c_lat = Math.cos(par_f_lat * K_DTR);
+                loc_c_lat = Math.cos(par_f_lat * GL_DEG_TO_RAD);
             }
 
-            sl[1] = Math.sin(par_f_lon * K_DTR);
-            cl[1] = Math.cos(par_f_lon * K_DTR);
+            K_SIN_LONG[1] = Math.sin(par_f_lon * GL_DEG_TO_RAD);
+            K_COS_LONG[1] = Math.cos(par_f_lon * GL_DEG_TO_RAD);
 
             if (par_gh === 3) {
                 this.x = 0; this.y = 0; this.z = 0;
@@ -276,28 +284,28 @@
             const npq = (par_nmax * (par_nmax + 3)) / 2;
 
             if (par_igdgc === 1) {
-                const aa_gd = a2 * loc_c_lat * loc_c_lat;
-                const bb_gd = b2 * loc_s_lat * loc_s_lat;
+                const aa_gd = GL_A_SQUARED * loc_c_lat * loc_c_lat;
+                const bb_gd = GL_B_SQUARED * loc_s_lat * loc_s_lat;
                 const cc_gd = aa_gd + bb_gd;
                 const dd_gd = Math.sqrt(cc_gd);
-                loc_r = Math.sqrt(par_elev * (par_elev + 2.0 * dd_gd) + (a2 * aa_gd + b2 * bb_gd) / cc_gd);
+                loc_r = Math.sqrt(par_elev * (par_elev + 2.0 * dd_gd) + (GL_A_SQUARED * aa_gd + GL_B_SQUARED * bb_gd) / cc_gd);
                 loc_cd = (par_elev + dd_gd) / loc_r;
-                loc_sd = (a2 - b2) / dd_gd * loc_s_lat * loc_c_lat / loc_r;
+                loc_sd = (GL_A_SQUARED - GL_B_SQUARED) / dd_gd * loc_s_lat * loc_c_lat / loc_r;
                 const aa_slat = loc_s_lat;
                 loc_s_lat = loc_s_lat * loc_cd - loc_c_lat * loc_sd;
                 loc_c_lat = loc_c_lat * loc_cd + aa_slat * loc_sd;
             }
 
-            const ratio = earths_radius / loc_r;
+            const ratio = GL_EARTH_RADIUS / loc_r;
             const aa = Math.sqrt(3.0);
-            p[1] = 2.0 * loc_s_lat;
-            p[2] = 2.0 * loc_c_lat;
-            p[3] = 4.5 * loc_s_lat * loc_s_lat - 1.5;
-            p[4] = 3.0 * aa * loc_c_lat * loc_s_lat;
-            q[1] = -loc_c_lat;
-            q[2] = loc_s_lat;
-            q[3] = -3.0 * loc_c_lat * loc_s_lat;
-            q[4] = aa * (loc_s_lat * loc_s_lat - loc_c_lat * loc_c_lat);
+            K_P[1] = 2.0 * loc_s_lat;
+            K_P[2] = 2.0 * loc_c_lat;
+            K_P[3] = 4.5 * loc_s_lat * loc_s_lat - 1.5;
+            K_P[4] = 3.0 * aa * loc_c_lat * loc_s_lat;
+            K_Q[1] = -loc_c_lat;
+            K_Q[2] = loc_s_lat;
+            K_Q[3] = -3.0 * loc_c_lat * loc_s_lat;
+            K_Q[4] = aa * (loc_s_lat * loc_s_lat - loc_c_lat * loc_c_lat);
 
             const gh_arr = (par_gh === 3) ? this.gha : this.ghb;
             let loc_fn = 0;
@@ -315,18 +323,18 @@
                     if (loc_m === loc_n) {
                         const aa_p = Math.sqrt(1.0 - 0.5 / fm);
                         const j = k - loc_n - 1;
-                        p[k] = (1.0 + 1.0 / fm) * aa_p * loc_c_lat * p[j];
-                        q[k] = aa_p * (loc_c_lat * q[j] + loc_s_lat / fm * p[j]);
-                        sl[loc_m] = sl[loc_m - 1] * cl[1] + cl[loc_m - 1] * sl[1];
-                        cl[loc_m] = cl[loc_m - 1] * cl[1] - sl[loc_m - 1] * sl[1];
+                        K_P[k] = (1.0 + 1.0 / fm) * aa_p * loc_c_lat * K_P[j];
+                        K_Q[k] = aa_p * (loc_c_lat * K_Q[j] + loc_s_lat / fm * K_P[j]);
+                        K_SIN_LONG[loc_m] = K_SIN_LONG[loc_m - 1] * K_COS_LONG[1] + K_COS_LONG[loc_m - 1] * K_SIN_LONG[1];
+                        K_COS_LONG[loc_m] = K_COS_LONG[loc_m - 1] * K_COS_LONG[1] - K_SIN_LONG[loc_m - 1] * K_SIN_LONG[1];
                     } else {
                         const aa_p = Math.sqrt(loc_fn * loc_fn - fm * fm);
                         const bb_p = Math.sqrt(((loc_fn - 1.0) * (loc_fn - 1.0)) - (fm * fm)) / aa_p;
                         const cc_p = (2.0 * loc_fn - 1.0) / aa_p;
                         const ii = k - loc_n;
                         const j = k - 2 * loc_n + 1;
-                        p[k] = (loc_fn + 1.0) * (cc_p * loc_s_lat / loc_fn * p[ii] - bb_p / (loc_fn - 1.0) * p[j]);
-                        q[k] = cc_p * (loc_s_lat * q[ii] - loc_c_lat / loc_fn * p[ii]) - bb_p * q[j];
+                        K_P[k] = (loc_fn + 1.0) * (cc_p * loc_s_lat / loc_fn * K_P[ii] - bb_p / (loc_fn - 1.0) * K_P[j]);
+                        K_Q[k] = cc_p * (loc_s_lat * K_Q[ii] - loc_c_lat / loc_fn * K_P[ii]) - bb_p * K_Q[j];
                     }
                 }
 
@@ -334,32 +342,32 @@
 
                 if (loc_m === 0) {
                     if (par_gh === 3) {
-                        this.x += aa_sh * q[k];
-                        this.z -= aa_sh * p[k];
+                        this.x += aa_sh * K_Q[k];
+                        this.z -= aa_sh * K_P[k];
                     } else {
-                        this.xtemp += aa_sh * q[k];
-                        this.ztemp -= aa_sh * p[k];
+                        this.xtemp += aa_sh * K_Q[k];
+                        this.ztemp -= aa_sh * K_P[k];
                     }
                     loc_l++;
                 } else {
                     const bb_sh = rr * gh_arr[loc_l + 1];
-                    const cc_sh = aa_sh * cl[loc_m] + bb_sh * sl[loc_m];
+                    const cc_sh = aa_sh * K_COS_LONG[loc_m] + bb_sh * K_SIN_LONG[loc_m];
 
                     if (par_gh === 3) {
-                        this.x += cc_sh * q[k];
-                        this.z -= cc_sh * p[k];
+                        this.x += cc_sh * K_Q[k];
+                        this.z -= cc_sh * K_P[k];
                         if (loc_c_lat > 0) {
-                            this.y += (aa_sh * sl[loc_m] - bb_sh * cl[loc_m]) * fm * p[k] / ((loc_fn + 1.0) * loc_c_lat);
+                            this.y += (aa_sh * K_SIN_LONG[loc_m] - bb_sh * K_COS_LONG[loc_m]) * fm * K_P[k] / ((loc_fn + 1.0) * loc_c_lat);
                         } else {
-                            this.y += (aa_sh * sl[loc_m] - bb_sh * cl[loc_m]) * q[k] * loc_s_lat;
+                            this.y += (aa_sh * K_SIN_LONG[loc_m] - bb_sh * K_COS_LONG[loc_m]) * K_Q[k] * loc_s_lat;
                         }
                     } else {
-                        this.xtemp += cc_sh * q[k];
-                        this.ztemp -= cc_sh * p[k];
+                        this.xtemp += cc_sh * K_Q[k];
+                        this.ztemp -= cc_sh * K_P[k];
                         if (loc_c_lat > 0) {
-                            this.ytemp += (aa_sh * sl[loc_m] - bb_sh * cl[loc_m]) * fm * p[k] / ((loc_fn + 1.0) * loc_c_lat);
+                            this.ytemp += (aa_sh * K_SIN_LONG[loc_m] - bb_sh * K_COS_LONG[loc_m]) * fm * K_P[k] / ((loc_fn + 1.0) * loc_c_lat);
                         } else {
-                            this.ytemp += (aa_sh * sl[loc_m] - bb_sh * cl[loc_m]) * q[k] * loc_s_lat;
+                            this.ytemp += (aa_sh * K_SIN_LONG[loc_m] - bb_sh * K_COS_LONG[loc_m]) * K_Q[k] * loc_s_lat;
                         }
                     }
                     loc_l += 2;
@@ -456,10 +464,10 @@
                 this.getshc(0, this.irec_pos[loc_model_I], this.max2[loc_model_I], 2);
                 loc_nmax = this.extrapsh(par_sdate, this.epoch[loc_model_I], this.max1[loc_model_I], this.max2[loc_model_I], 3);
             }
-            this.shval3(par_igdgc, par_lat, par_long, par_alt, loc_nmax, 3);
+            this.sh_val_3(par_igdgc, par_lat, par_long, par_alt, loc_nmax, 3);
             this.dihf(3);
-            const d_deg = this.d * K_RAD2DEG;
-            const i_deg = this.i * K_RAD2DEG;
+            const d_deg = this.d * GL_RAD_TO_DEG;
+            const i_deg = this.i * GL_RAD_TO_DEG;
             let loc_final_x = this.x, final_y = this.y, final_d_deg = d_deg;
             if (Math.abs(90.0 - Math.abs(par_lat)) <= 0.001) {
                 loc_final_x = NaN; final_y = NaN; final_d_deg = NaN;
@@ -528,11 +536,11 @@
 
     /**
      * Performs a single geomagnetic calculation for a given set of parameters.
-     * @param {Geomag} par_geomag - The geomag model instance.
+     * @param {CL_GEOMAG} par_geomag - The geomag model instance.
      * @param {object} par_params - { sdate, igdgc, alt, latitude, longitude }
      * @returns {boolean} - true if successful, false otherwise.
      */
-    function calculate_point(par_geomag, par_params) {
+    function CALCULATE_POINT(par_geomag, par_params) {
         const { sdate, igdgc, alt, latitude, longitude } = par_params;
 
         // Select the appropriate geomagnetic model based on the input date
@@ -557,23 +565,23 @@
         }
 
         // Calculate geomagnetic field vector components
-        par_geomag.shval3(igdgc, latitude, longitude, alt, loc_nmax, 3); // for date
+        par_geomag.sh_val_3(igdgc, latitude, longitude, alt, loc_nmax, 3); // for date
         par_geomag.dihf(3);
-        par_geomag.shval3(igdgc, latitude, longitude, alt, loc_nmax, 4); // for date + 1 year
+        par_geomag.sh_val_3(igdgc, latitude, longitude, alt, loc_nmax, 4); // for date + 1 year
         par_geomag.dihf(4);
 
         // -- Output Results --
         // Convert radians to degrees for printing
-        const d_deg = par_geomag.d * K_RAD2DEG;
-        const i_deg = par_geomag.i * K_RAD2DEG;
+        const d_deg = par_geomag.d * GL_RAD_TO_DEG;
+        const i_deg = par_geomag.i * GL_RAD_TO_DEG;
 
         // Compute annual change (secular variation)
-        let loc_d_dot = (par_geomag.dtemp - par_geomag.d) * K_RAD2DEG;
+        let loc_d_dot = (par_geomag.dtemp - par_geomag.d) * GL_RAD_TO_DEG;
         if (loc_d_dot > 180.0) loc_d_dot -= 360.0;
         if (loc_d_dot <= -180.0) loc_d_dot += 360.0;
         loc_d_dot *= 60.0; // Convert to minutes/year
 
-        const idot = (par_geomag.itemp - par_geomag.i) * K_RAD2DEG * 60.0;
+        const idot = (par_geomag.itemp - par_geomag.i) * GL_RAD_TO_DEG * 60.0;
         const hdot = par_geomag.htemp - par_geomag.h;
         const xdot = par_geomag.xtemp - par_geomag.x;
         const ydot = par_geomag.ytemp - par_geomag.y;
@@ -608,16 +616,16 @@
 
     /**
      * Prompts user for parameters to calculate a single point.
-     * @param {Geomag} par_geomag - The geomag model instance.
+     * @param {CL_GEOMAG} par_geomag - The geomag model instance.
      */
-    function calculateSinglePoint(par_geomag) {
+    function CALC_SINGLE_POINT(par_geomag) {
         const { minyr, maxyr } = par_geomag;
-        let sdate = -1, igdgc = -1, alt = -999999, latitude = 200, longitude = 200;
+        let loc_s_date = -1, igdgc = -1, alt = -999999, latitude = 200, longitude = 200;
 
-        while (sdate < minyr || sdate > maxyr + 1) {
-            sdate = parseFloat(prompt(`Enter decimal date (${minyr.toFixed(2)} to ${maxyr.toFixed(0)}): `));
-            if (sdate > maxyr && sdate < maxyr + 1) {
-                console.log(`Warning: Date ${sdate.toFixed(2)} is out of range but within one year of model expiration.`);
+        while (loc_s_date < minyr || loc_s_date > maxyr + 1) {
+            loc_s_date = parseFloat(prompt(`Enter decimal date (${minyr.toFixed(2)} to ${maxyr.toFixed(0)}): `));
+            if (loc_s_date > maxyr && loc_s_date < maxyr + 1) {
+                console.log(`Warning: Date ${loc_s_date.toFixed(2)} is out of range but within one year of model expiration.`);
             }
         }
 
@@ -638,7 +646,7 @@
             longitude = parseFloat(prompt("Enter decimal longitude (-180 to 180): "));
         }
 
-        calculate_point(par_geomag, {sdate, igdgc, alt, latitude, longitude});
+        CALCULATE_POINT(par_geomag, {sdate: loc_s_date, igdgc, alt, latitude, longitude});
     }
 
     // --- START: New functions for NOAA-style output ---
@@ -649,7 +657,7 @@
      * @param {object} par_sv - Object containing the secular variation (annual change) data.
      * @param {object} par_loc_Info - Object with location and model details.
      */
-    function printNOAAStyleTable(par_results, par_sv, par_loc_Info) {
+    function PRINT_NOAA_STYLE_TABLE(par_results, par_sv, par_loc_Info) {
         const { modelName, latitude, longitude, alt } = par_loc_Info;
 
         // Helper functions for formatting location
@@ -750,29 +758,29 @@
      * Calculates only the main field components for a single date.
      * @returns {object} An object with the calculated field values.
      */
-    function calculate_field_at_date(par_geomag, par_sdate, par_igdgc, par_alt, par_lat, par_long) {
+    function CALCULATE_FIELD_AT_DATE(par_geomag, par_sdate, par_igdgc, par_alt, par_lat, par_long) {
         let loc_model_I;
         for (loc_model_I = 0; loc_model_I < par_geomag.nmodel; loc_model_I++) {
             if (par_sdate < par_geomag.yrmax[loc_model_I]) break;
         }
         if (loc_model_I === par_geomag.nmodel) loc_model_I--;
 
-        let nmax;
+        let loc_n_max;
         if (par_geomag.max2[loc_model_I] === 0) {
             par_geomag.getshc(1, par_geomag.irec_pos[loc_model_I], par_geomag.max1[loc_model_I], 1);
             par_geomag.getshc(1, par_geomag.irec_pos[loc_model_I + 1], par_geomag.max1[loc_model_I + 1], 2);
-            nmax = par_geomag.interpsh(par_sdate, par_geomag.yrmin[loc_model_I], par_geomag.max1[loc_model_I], par_geomag.yrmin[loc_model_I + 1], par_geomag.max1[loc_model_I + 1], 3);
+            loc_n_max = par_geomag.interpsh(par_sdate, par_geomag.yrmin[loc_model_I], par_geomag.max1[loc_model_I], par_geomag.yrmin[loc_model_I + 1], par_geomag.max1[loc_model_I + 1], 3);
         } else {
             par_geomag.getshc(1, par_geomag.irec_pos[loc_model_I], par_geomag.max1[loc_model_I], 1);
             par_geomag.getshc(0, par_geomag.irec_pos[loc_model_I], par_geomag.max2[loc_model_I], 2);
-            nmax = par_geomag.extrapsh(par_sdate, par_geomag.epoch[loc_model_I], par_geomag.max1[loc_model_I], par_geomag.max2[loc_model_I], 3);
+            loc_n_max = par_geomag.extrapsh(par_sdate, par_geomag.epoch[loc_model_I], par_geomag.max1[loc_model_I], par_geomag.max2[loc_model_I], 3);
         }
 
-        par_geomag.shval3(par_igdgc, par_lat, par_long, par_alt, nmax, 3);
+        par_geomag.sh_val_3(par_igdgc, par_lat, par_long, par_alt, loc_n_max, 3);
         par_geomag.dihf(3);
 
-        const d_deg = par_geomag.d * K_RAD2DEG;
-        const i_deg = par_geomag.i * K_RAD2DEG;
+        const d_deg = par_geomag.d * GL_RAD_TO_DEG;
+        const i_deg = par_geomag.i * GL_RAD_TO_DEG;
         let loc_final_x = par_geomag.x, final_y = par_geomag.y, final_d_deg = d_deg;
 
         if (Math.abs(90.0 - Math.abs(par_lat)) <= 0.001) {
@@ -789,7 +797,7 @@
      * Calculates the secular variation (annual change) for a specific date.
      * @returns {object} An object with the calculated rates of change.
      */
-    function get_secular_variation(par_geomag, par_params) {
+    function GET_SECULAR_VARIATION(par_geomag, par_params) {
         const { sdate, igdgc, alt, latitude, longitude } = par_params;
 
         let loc_model_I;
@@ -811,17 +819,17 @@
             par_geomag.extrapsh(sdate + 1, par_geomag.epoch[loc_model_I], par_geomag.max1[loc_model_I], par_geomag.max2[loc_model_I], 4);
         }
 
-        par_geomag.shval3(igdgc, latitude, longitude, alt, nmax, 3);
+        par_geomag.sh_val_3(igdgc, latitude, longitude, alt, nmax, 3);
         par_geomag.dihf(3);
-        par_geomag.shval3(igdgc, latitude, longitude, alt, nmax, 4);
+        par_geomag.sh_val_3(igdgc, latitude, longitude, alt, nmax, 4);
         par_geomag.dihf(4);
 
-        let loc_ddot_raw = (par_geomag.dtemp - par_geomag.d) * K_RAD2DEG;
+        let loc_ddot_raw = (par_geomag.dtemp - par_geomag.d) * GL_RAD_TO_DEG;
         if (loc_ddot_raw > 180.0) loc_ddot_raw -= 360.0;
         if (loc_ddot_raw <= -180.0) loc_ddot_raw += 360.0;
 
         let loc_ddot_deg = loc_ddot_raw;
-        const idot_deg = (par_geomag.itemp - par_geomag.i) * K_RAD2DEG;
+        const idot_deg = (par_geomag.itemp - par_geomag.i) * GL_RAD_TO_DEG;
         const hdot = par_geomag.htemp - par_geomag.h;
         let loc_xdot = par_geomag.xtemp - par_geomag.x;
         let loc_ydot = par_geomag.ytemp - par_geomag.y;
@@ -836,9 +844,9 @@
 
     /**
      * Prompts user for parameters and calculates a range of dates, printing in NOAA format.
-     * @param {Geomag} par_geomag - The geomag model instance.
+     * @param {CL_GEOMAG} par_geomag - The geomag model instance.
      */
-    function calculateDateRangeNOAA(par_geomag) {
+    function CALCULATE_DATE_RANGE_NOAA(par_geomag) {
         console.log('\n--- Calculate Field for a Date Range (NOAA Format) ---');
         let loc_start_year = parseInt(prompt('Enter start year (e.g. 2025): '));
         let loc_end_year = parseInt(prompt('Enter end year (e.g. 2029): '));
@@ -866,7 +874,7 @@
             const sdate = par_geomag.julday(loc_month, loc_day, loc_year);
             const dateStr = `${loc_year}-${String(loc_month).padStart(2, '0')}-${String(loc_day).padStart(2, '0')}`;
 
-            const pointGeomag = new Geomag();
+            const pointGeomag = new CL_GEOMAG();
             pointGeomag.modelData = par_geomag.modelData;
             Object.assign(pointGeomag, {
                  model: par_geomag.model, nmodel: par_geomag.nmodel, epoch: par_geomag.epoch,
@@ -874,7 +882,7 @@
                  max1: par_geomag.max1, max2: par_geomag.max2, max3: par_geomag.max3, irec_pos: par_geomag.irec_pos
             });
 
-            const data = calculate_field_at_date(pointGeomag, sdate, loc_igdgc, loc_alt, loc_lat, loc_long);
+            const data = CALCULATE_FIELD_AT_DATE(pointGeomag, sdate, loc_igdgc, loc_alt, loc_lat, loc_long);
             if (!loc_model_name) loc_model_name = data.modelName;
 
             loc_results.push({ sdate, dateStr, ...data });
@@ -885,17 +893,17 @@
             return;
         }
 
-        const svGeomag = new Geomag();
+        const svGeomag = new CL_GEOMAG();
         svGeomag.modelData = par_geomag.modelData;
         Object.assign(svGeomag, {
                 model: par_geomag.model, nmodel: par_geomag.nmodel, epoch: par_geomag.epoch,
                 yrmin: par_geomag.yrmin, yrmax: par_geomag.yrmax, altmin: par_geomag.altmin, altmax: par_geomag.altmax,
                 max1: par_geomag.max1, max2: par_geomag.max2, max3: par_geomag.max3, irec_pos: par_geomag.irec_pos
         });
-        const sv = get_secular_variation(svGeomag, { sdate: loc_results[0].sdate, igdgc: loc_igdgc, alt: loc_alt, latitude: loc_lat, longitude: loc_long });
+        const sv = GET_SECULAR_VARIATION(svGeomag, { sdate: loc_results[0].sdate, igdgc: loc_igdgc, alt: loc_alt, latitude: loc_lat, longitude: loc_long });
 
         const locationInfo = { modelName: loc_model_name, latitude: loc_lat, longitude: loc_long, alt: loc_alt };
-        printNOAAStyleTable(loc_results, sv, locationInfo);
+        PRINT_NOAA_STYLE_TABLE(loc_results, sv, locationInfo);
     }
     // --- END: New functions for NOAA-style output ---
 
@@ -908,17 +916,17 @@
         console.log("\n\nGeomag v7.0 (JavaScript port, v3) - Compatible with WMM and IGRF");
 
         if (args.length > 0) {
-            await runFromArgs(args);
+            await RUN_FROM_ARGS(args);
             return;
         }
 
-        await runInteractive();
+        await RUN_INTERACTIVE();
     }
 
     /**
      * Run program from command-line arguments and exit.
      */
-    async function runFromArgs(par_args) {
+    async function RUN_FROM_ARGS(par_args) {
         if (par_args.length === 1 && (par_args[0] === 'h' || par_args[0] === '?')) {
             console.log("\nUsage (command line): node geomag.js model_file date coord alt lat lon");
             console.log("Example: node geomag.js IGRF14.COF 2023.5 D K10 55.75 37.61");
@@ -930,7 +938,7 @@
             return;
         }
 
-        const geomag = new Geomag();
+        const geomag = new CL_GEOMAG();
         if (!geomag.loadModelFile(par_args[0])) return;
 
         const dateArg = par_args[1];
@@ -947,19 +955,19 @@
         const unitChar = altArg.charAt(0).toUpperCase();
         let loc_alt = parseFloat(altArg.substring(1));
         if (unitChar === 'M') loc_alt *= 0.001;
-        else if (unitChar === 'F') loc_alt /= K_FT2KM;
+        else if (unitChar === 'F') loc_alt /= GL_FT_TO_KM;
 
         const latitude = parseFloat(par_args[4]);
         const longitude = parseFloat(par_args[5]);
 
-        calculate_point(geomag, { sdate: loc_s_date, igdgc, alt: loc_alt, latitude, longitude });
+        CALCULATE_POINT(geomag, { sdate: loc_s_date, igdgc, alt: loc_alt, latitude, longitude });
     }
 
     /**
      * Run program in interactive mode.
      */
-    async function runInteractive() {
-        const geomag = new Geomag();
+    async function RUN_INTERACTIVE() {
+        const geomag = new CL_GEOMAG();
 
         while(true) { // Outer loop for model selection
             let loc_mdfile = "";
@@ -997,10 +1005,10 @@
 
                 switch(choice) {
                     case '1':
-                        calculateSinglePoint(geomag);
+                        CALC_SINGLE_POINT(geomag);
                         break;
                     case '2':
-                        calculateDateRangeNOAA(geomag);
+                        CALCULATE_DATE_RANGE_NOAA(geomag);
                         break;
                     case '3':
                         loc_stay_in_calc_loop = false; // Breaks inner loop to go to outer loop
@@ -1018,7 +1026,7 @@
 
     // At the end of the file, expose CL_GEOMAG globally for browser
     if (typeof window !== 'undefined') {
-        window.Geomag = Geomag;
+        window.CL_GEOMAG = CL_GEOMAG;
     }
     // Only run main() in Node.js, not in browser
     if (typeof window === 'undefined') {
@@ -1026,4 +1034,4 @@
     }
 
     // Export CL_GEOMAG for module usage
-    export { Geomag };
+    export { CL_GEOMAG };

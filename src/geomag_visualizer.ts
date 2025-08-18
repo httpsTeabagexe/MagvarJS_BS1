@@ -1,5 +1,5 @@
 import * as d3 from 'd3';
-import { feature as topojsonFeature} from 'topojson-client';
+import { feature as TOPOJSON_FEATURE} from 'topojson-client';
 import type { Topology } from 'topojson-specification';
 import { type FeatureCollection, type Geometry, type GeoJsonProperties } from 'geojson';
 
@@ -80,7 +80,7 @@ const K_MAG_MAP_APP = {
     currentIsolines: null as d3.Selection<SVGGElement, unknown, HTMLElement, any> | null,
 
     // --- Main Initializer ---
-    init: function() {
+    INIT: function() {
         document.addEventListener('DOMContentLoaded', () => {
             console.log("Initializing...");
             try {
@@ -255,7 +255,7 @@ const K_MAG_MAP_APP = {
             return;
         }
 
-        const land = topojsonFeature(world, world.objects.countries as any) as unknown as FeatureCollection;
+        const land = TOPOJSON_FEATURE(world, world.objects.countries as any) as unknown as FeatureCollection;
         const sphere = { type: "Sphere" as const };
         const dipPoles = await this.CALCULATE_DIP_POLES();
         const commonArgs: CommonArgs = { geomagInstance, epoch: currentEpoch, altitudeKm: currentAltitude };
@@ -574,14 +574,14 @@ const K_MAG_MAP_APP = {
         const { values: paddedValues, width: paddedWidth, height: paddedHeight } = paddedGridData;
         const originalWidth = paddedWidth - 2; const originalHeight = paddedHeight - 2;
 
-        const geoTransform = (geometry: any): any => {
-            const transformPoint = (point: [number, number]): [number, number] => {
+        const GEO_TRANSFORM = (geometry: any): any => {
+            const TRANSFORM_POINT = (point: [number, number]): [number, number] => {
                 const lon = ((point[0] - 1) / (originalWidth - 1)) * 360 - 180;
                 const lat = 90 - ((point[1] - 1) / (originalHeight - 1)) * 180;
                 return [lon, lat];
             };
             const newCoordinates = geometry.coordinates.map((polygon: any) =>
-                polygon.map((ring: any) => ring.map(transformPoint))
+                polygon.map((ring: any) => ring.map(TRANSFORM_POINT))
             );
             return { type: "MultiPolygon", coordinates: newCoordinates, value: geometry.value };
         };
@@ -592,7 +592,7 @@ const K_MAG_MAP_APP = {
             container.append("path").datum({ type: "Sphere" } as any).attr("d", pathGenerator as any).style("fill", zone.color);
             const safeContours = d3.contours().size([paddedWidth, paddedHeight]).thresholds([zone.threshold]);
             // Convert Float32Array to Array for d3.contours
-            const safeGeometries = safeContours(Array.from(paddedValues)).map(geoTransform);
+            const safeGeometries = safeContours(Array.from(paddedValues)).map(GEO_TRANSFORM);
             container.append("g").selectAll("path").data(safeGeometries).enter().append("path")
                 .attr("d", pathGenerator as any).style("fill", mapBackgroundColor);
         });
@@ -826,4 +826,4 @@ const K_MAG_MAP_APP = {
     }
 };
 
-K_MAG_MAP_APP.init();
+K_MAG_MAP_APP.INIT();
