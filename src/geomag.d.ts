@@ -1,5 +1,5 @@
 // src/geomag.d.ts
-// This file describes the shape of the existing Geomag class from geomag.js
+// This file describes the shape of the existing CL_GEOMAG class from geomag.js
 
 interface GeomagFieldComponents {
     d_deg: number;
@@ -11,7 +11,7 @@ interface GeomagFieldComponents {
     f: number;
 }
 
-declare class Geomag {
+declare class CL_GEOMAG {
     constructor();
     modelData: string[];
     model: string[];
@@ -28,5 +28,5 @@ declare class Geomag {
     max3: number[];
     irec_pos: number[];
 
-    getFieldComponents(epoch: number, igdgc: number, altitudeKm: number, lat: number, lon: number): GeomagFieldComponents;
+    getFieldComponents(par_epoch: number, par_igdgc: number, par_alt_Km: number, par_lat: number, par_lon: number): GeomagFieldComponents;
 }

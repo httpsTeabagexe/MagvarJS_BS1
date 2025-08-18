@@ -36,18 +36,18 @@ interface DipPole {
 }
 
 interface CommonArgs {
-    geomagInstance: Geomag;
+    geomagInstance: CL_GEOMAG;
     epoch: number;
     altitudeKm: number;
 }
 
 // --- Marching Squares Helper Functions ---
-function lerp(threshold: number, p1_val: number, p2_val: number): number {
+function LERP(threshold: number, p1_val: number, p2_val: number): number {
     if (p2_val - p1_val === 0) return 0.5;
     return (threshold - p1_val) / (p2_val - p1_val);
 }
 
-function binaryToType(nw: boolean, ne: boolean, se: boolean, sw: boolean): number {
+function BIN_TO_TYPE(nw: boolean, ne: boolean, se: boolean, sw: boolean): number {
     let type = 0;
     if (nw) type |= 8;
     if (ne) type |= 4;
@@ -56,7 +56,7 @@ function binaryToType(nw: boolean, ne: boolean, se: boolean, sw: boolean): numbe
     return type;
 }
 
-const MagMapApp = {
+const K_MAG_MAP_APP = {
     // --- Configuration ---
     config: {
         igdgc: 1,
@@ -69,7 +69,7 @@ const MagMapApp = {
     },
 
     // --- Application State ---
-    geomagInstance: null as Geomag | null,
+    geomagInstance: null as CL_GEOMAG | null,
     cofFileContentCache: null as string | null,
     isSmoothingEnabled: true,
     isUncertaintyVisible: false,
@@ -87,8 +87,8 @@ const MagMapApp = {
                 this.clickInfoWindow = d3.select("body").append("div")
                     .attr("class", "coordinate-info");
 
-                this.setupUIListeners();
-                this.initializeGeomag();
+                this.SETUP_UI_LISTENERS();
+                this.INIT_GEOMAG();
             } catch (error) {
                 console.error("Initialization error:", error);
             }
@@ -96,7 +96,7 @@ const MagMapApp = {
     },
 
     // --- UI and Event Handling ---
-    updateUncertaintyButtonState: function() {
+    UPD_UNCERTAINTY_BTN_STATE: function() {
         const fieldSelect = document.getElementById('fieldSelect') as HTMLSelectElement;
         const uncertaintyButton = document.getElementById('uncertaintyButton') as HTMLButtonElement;
         const field = fieldSelect.value as FieldType;
@@ -114,36 +114,36 @@ const MagMapApp = {
         }
     },
 
-    setupUIListeners: function() {
+    SETUP_UI_LISTENERS: function() {
         const renderButton = document.getElementById('renderButton') as HTMLButtonElement;
         const fieldSelect = document.getElementById('fieldSelect') as HTMLSelectElement;
         const smoothingButton = document.getElementById('smoothingButton') as HTMLButtonElement;
         const uncertaintyButton = document.getElementById('uncertaintyButton') as HTMLButtonElement;
 
-        renderButton.addEventListener('click', () => this.handleRenderClick());
+        renderButton.addEventListener('click', () => this.HANDLE_RENDER_CLICK());
 
         fieldSelect.addEventListener('change', () => {
             if (fieldSelect.value === 'totalfield') this.isUncertaintyVisible = false;
-            this.updateUncertaintyButtonState();
-            this.handleRenderClick();
+            this.UPD_UNCERTAINTY_BTN_STATE();
+            this.HANDLE_RENDER_CLICK();
         });
 
         smoothingButton.addEventListener('click', () => {
             this.isSmoothingEnabled = !this.isSmoothingEnabled;
             smoothingButton.setAttribute('aria-pressed', String(this.isSmoothingEnabled));
-            this.handleRenderClick();
+            this.HANDLE_RENDER_CLICK();
         });
 
         uncertaintyButton.addEventListener('click', () => {
             if (!uncertaintyButton.disabled) {
                 this.isUncertaintyVisible = !this.isUncertaintyVisible;
-                this.updateUncertaintyButtonState();
-                this.handleRenderClick();
+                this.UPD_UNCERTAINTY_BTN_STATE();
+                this.HANDLE_RENDER_CLICK();
             }
         });
 
         smoothingButton.setAttribute('aria-pressed', String(this.isSmoothingEnabled));
-        this.updateUncertaintyButtonState();
+        this.UPD_UNCERTAINTY_BTN_STATE();
 
         document.addEventListener('click', (e: MouseEvent) => {
             const target = e.target as HTMLElement;
@@ -153,7 +153,7 @@ const MagMapApp = {
         });
     },
 
-    updateStatus: function(message: string, isError = false): void {
+    UPD_STATUS: function(message: string, isError = false): void {
         const statusEl = document.getElementById('status');
         if (statusEl) {
             statusEl.textContent = message;
@@ -161,48 +161,48 @@ const MagMapApp = {
         }
     },
 
-    initializeGeomag: async function(): Promise<boolean> {
-        if (typeof Geomag === 'undefined') {
-            this.updateStatus('Error: Geomag class not found.', true);
+    INIT_GEOMAG: async function(): Promise<boolean> {
+        if (typeof CL_GEOMAG === 'undefined') {
+            this.UPD_STATUS('Error: CL_GEOMAG class not found.', true);
             return false;
         }
-        this.geomagInstance = new Geomag();
+        this.geomagInstance = new CL_GEOMAG();
         try {
             if (!this.cofFileContentCache) {
-                this.updateStatus('Fetching .COF model file...');
+                this.UPD_STATUS('Fetching .COF model file...');
                 const response = await fetch(this.config.cofURL);
                 if (!response.ok) throw new Error(`Failed to fetch COF file: ${response.statusText}`);
                 this.cofFileContentCache = await response.text();
             }
-            this.updateStatus('Loading COF model data...');
-            if (!this.loadModelIntoInstance(this.geomagInstance, this.cofFileContentCache)) {
-                this.updateStatus('Error: Failed to load model data.', true);
+            this.UPD_STATUS('Loading COF model data...');
+            if (!this.LOAD_MODEL_INTO_INSTANCE(this.geomagInstance, this.cofFileContentCache)) {
+                this.UPD_STATUS('Error: Failed to load model data.', true);
                 return false;
             }
-            this.updateStatus(`Model loaded. Valid range: ${this.geomagInstance.minyr.toFixed(1)} - ${this.geomagInstance.maxyr.toFixed(1)}. Ready.`);
-            await this.handleRenderClick();
+            this.UPD_STATUS(`Model loaded. Valid range: ${this.geomagInstance.minyr.toFixed(1)} - ${this.geomagInstance.maxyr.toFixed(1)}. Ready.`);
+            await this.HANDLE_RENDER_CLICK();
             return true;
         } catch (error) {
             console.error('Initialization failed:', error);
-            this.updateStatus(`Error initializing: ${(error as Error).message}`, true);
+            this.UPD_STATUS(`Error initializing: ${(error as Error).message}`, true);
             return false;
         }
     },
 
-    clearOverlays: function(): void {
+    CLR_OVERLAYS: function(): void {
         const svg = d3.select("#geomag-map");
         svg.selectAll(".contours-manual, .caution-zone, .unreliable-zone, .legend").remove();
-        this.clearClickElements();
+        this.CLR_CLICK_ELEMENTS();
     },
 
-    isPointInMap: function(x: number, y: number): boolean {
+    IS_POINT_IN_MAP: function(x: number, y: number): boolean {
         const svg = d3.select<SVGSVGElement, unknown>("#geomag-map");
         const width = +(svg.attr("width") || 0);
         const height = +(svg.attr("height") || 0);
         return x >= 0 && x <= width && y >= 0 && y <= height;
     },
 
-    handleRenderClick: async function(): Promise<void> {
+    HANDLE_RENDER_CLICK: async function(): Promise<void> {
         const renderButton = document.getElementById('renderButton') as HTMLButtonElement;
         const epochInput = document.getElementById('epochInput') as HTMLInputElement;
         const altitudeInput = document.getElementById('altitudeInput') as HTMLInputElement;
@@ -211,53 +211,53 @@ const MagMapApp = {
 
         try {
             renderButton.disabled = true;
-            this.updateStatus('Rendering...', false);
+            this.UPD_STATUS('Rendering...', false);
 
             if (!this.geomagInstance || this.geomagInstance.nmodel === 0) {
-                this.updateStatus('Initializing Geomag model first...', false);
-                const initialized = await this.initializeGeomag();
+                this.UPD_STATUS('Initializing CL_GEOMAG model first...', false);
+                const initialized = await this.INIT_GEOMAG();
                 if (!initialized) return;
             }
 
-            this.clearOverlays();
+            this.CLR_OVERLAYS();
             const currentEpoch = parseFloat(epochInput.value);
             const currentAltitude = parseFloat(altitudeInput.value);
             const gridStep = parseFloat(gridStepInput.value);
             const field = fieldSelect.value as FieldType;
 
             if (isNaN(currentEpoch) || isNaN(currentAltitude) || isNaN(gridStep) || gridStep <= 0) {
-                this.updateStatus('Error: Invalid input. All values must be positive numbers (steps > 0).', true);
+                this.UPD_STATUS('Error: Invalid input. All values must be positive numbers (steps > 0).', true);
                 return;
             }
 
             this.config.gridResolutionLat = Math.floor(180 / gridStep) + 1;
             this.config.gridResolutionLon = Math.floor(360 / gridStep) + 1;
 
-            this.updateStatus(`Rendering ${field.charAt(0).toUpperCase() + field.slice(1)} for Epoch: ${currentEpoch.toFixed(2)}...`, false);
+            this.UPD_STATUS(`Rendering ${field.charAt(0).toUpperCase() + field.slice(1)} for Epoch: ${currentEpoch.toFixed(2)}...`, false);
 
-            await this.renderGeomagMap('geomag-map', this.geomagInstance!, currentEpoch, currentAltitude, field);
-            this.updateStatus(`Map rendered for Epoch: ${currentEpoch.toFixed(2)}.`, false);
+            await this.RENDER_GEOMAG_MAP('geomag-map', this.geomagInstance!, currentEpoch, currentAltitude, field);
+            this.UPD_STATUS(`Map rendered for Epoch: ${currentEpoch.toFixed(2)}.`, false);
 
         } catch (error) {
             console.error('Failed to render map:', error);
-            this.updateStatus(`Error rendering map: ${(error as Error).message}`, true);
+            this.UPD_STATUS(`Error rendering map: ${(error as Error).message}`, true);
         } finally {
             renderButton.disabled = false;
         }
     },
 
-    renderGeomagMap: async function(svgId: string, geomagInstance: Geomag, currentEpoch: number, currentAltitude: number, field: FieldType): Promise<void> {
-        this.clearOverlays();
+    RENDER_GEOMAG_MAP: async function(svgId: string, geomagInstance: CL_GEOMAG, currentEpoch: number, currentAltitude: number, field: FieldType): Promise<void> {
+        this.CLR_OVERLAYS();
 
         const world = await d3.json<Topology>(this.config.worldAtlasURL);
         if (!world || !world.objects) {
-            this.updateStatus("Error: Invalid world atlas data.", true);
+            this.UPD_STATUS("Error: Invalid world atlas data.", true);
             return;
         }
 
         const land = topojsonFeature(world, world.objects.countries as any) as unknown as FeatureCollection;
         const sphere = { type: "Sphere" as const };
-        const dipPoles = await this.calculateDipPoles();
+        const dipPoles = await this.CALCULATE_DIP_POLES();
         const commonArgs: CommonArgs = { geomagInstance, epoch: currentEpoch, altitudeKm: currentAltitude };
 
         let paramKey: ParamKey, title: string, legend: LegendItem[];
@@ -306,32 +306,32 @@ const MagMapApp = {
             zeroOptions = { step: 0, domain: [0, -1], colorFunc, majorMultiplier, labelCondition };
         }
 
-        const { pathGenerator, clippedGroup } = this.drawBaseMap(svgId, land, sphere, title, dipPoles);
-        const gridData = this.generateGridData(commonArgs, paramKey);
+        const { pathGenerator, clippedGroup } = this.DRAW_BASE_MAP(svgId, land, sphere, title, dipPoles);
+        const gridData = this.GENERATE_GRID_DATA(commonArgs, paramKey);
 
-        if (this.isSmoothingEnabled) this.applyGaussianBlur(gridData.values, gridData.width, gridData.height, 1.5);
+        if (this.isSmoothingEnabled) this.APPLY_GAUSSIAN_BLUR(gridData.values, gridData.width, gridData.height, 1.5);
 
         const passes = [positiveOptions, negativeOptions, zeroOptions];
         for (const options of passes) {
             if (options.domain[0] <= options.domain[1]) {
-                this.drawContourLayer(clippedGroup, pathGenerator, gridData, options);
+                this.DRAW_CONTOUR_LAYER(clippedGroup, pathGenerator, gridData, options);
             }
         }
 
         if (this.isUncertaintyVisible && (field === 'declination' || field === 'inclination')) {
-            this.updateStatus('Calculating blackout zones...', false);
-            const hGridData = this.generateGridData(commonArgs, 'h');
-            const paddedGrid = this.createPaddedGrid(hGridData, 100000);
-            this.drawBlackoutZones(clippedGroup, pathGenerator, paddedGrid);
+            this.UPD_STATUS('Calculating blackout zones...', false);
+            const hGridData = this.GENERATE_GRID_DATA(commonArgs, 'h');
+            const paddedGrid = this.CREATE_PADDED_GRID(hGridData, 100000);
+            this.DRAW_BLACKOUT_ZONES(clippedGroup, pathGenerator, paddedGrid);
 
             legend.push({ color: "rgba(255, 165, 0, 0.4)", text: "Caution Zone (H < 6000 nT)" });
             legend.push({ color: "rgba(255, 0, 0, 0.5)", text: "Unreliable Zone (H < 2000 nT)" });
         }
 
-        this.addLegend(svgId, legend);
+        this.ADD_LEGEND(svgId, legend);
     },
 
-    drawBaseMap: function (svgId: string, landFeatures: FeatureCollection<Geometry, GeoJsonProperties>, sphereFeature: {
+    DRAW_BASE_MAP: function (svgId: string, landFeatures: FeatureCollection<Geometry, GeoJsonProperties>, sphereFeature: {
         type: "Sphere"
     }, title: string, dipPoles: DipPole[]) {
         const { mapWidth, mapHeight } = this.config;
@@ -357,7 +357,7 @@ const MagMapApp = {
             .attr("id", `${svgId}-clipped-group`)
             .attr("clip-path", `url(#${clipPathId})`);
 
-        this.drawGraticules(clippedGroup, svg, this.projection, pathGenerator);
+        this.DRAW_GRATICULES(clippedGroup, svg, this.projection, pathGenerator);
 
         clippedGroup.append("path")
             .datum(landFeatures)
@@ -388,7 +388,7 @@ const MagMapApp = {
         svg.on("click", (event: MouseEvent) => {
             try {
                 const [x, y] = d3.pointer(event);
-                this.handleMapClick(x, y);
+                this.HANDLE_MAP_CLICK(x, y);
             } catch (error) {
                 console.error("Error handling click event:", error);
             }
@@ -396,32 +396,32 @@ const MagMapApp = {
         return { pathGenerator, clippedGroup };
     },
 
-    handleMapClick: function(x: number, y: number): void {
+    HANDLE_MAP_CLICK: function(x: number, y: number): void {
         if (!this.projection) return;
-        this.clearClickElements();
-        if (!this.isPointInMap(x, y)) return;
+        this.CLR_CLICK_ELEMENTS();
+        if (!this.IS_POINT_IN_MAP(x, y)) return;
         try {
             const proj = this.projection;
             if (!proj || typeof proj.invert !== 'function') return;
             const coords = proj.invert([x, y]);
             if (!coords || coords.some(isNaN)) return;
             this.currentClickPoint = { x, y, lon: coords[0], lat: coords[1] };
-            const fieldData = this.getFieldAtPoint(coords);
+            const fieldData = this.GET_POINT_FIELD(coords);
             if (!fieldData) return;
-            this.showCoordinateInfo(x, y, coords, fieldData);
-            this.drawIsolinesFromPoint(coords, fieldData);
+            this.SHOW_COORD_INFO(x, y, coords, fieldData);
+            this.DRAW_ISOLINES_FROM_POINT(coords, fieldData);
         } catch (error) {
             console.error("Error handling map click:", error);
         }
     },
 
-    clearClickElements: function(): void {
+    CLR_CLICK_ELEMENTS: function(): void {
         this.clickInfoWindow?.style("display", "none");
         this.currentIsolines?.remove();
         this.currentIsolines = null;
     },
 
-    getFieldAtPoint: function(coords: [number, number]): GeomagFieldComponents | null {
+    GET_POINT_FIELD: function(coords: [number, number]): GeomagFieldComponents | null {
         if (!this.geomagInstance) return null;
 
         const [lon, lat] = coords;
@@ -430,7 +430,7 @@ const MagMapApp = {
         const currentEpoch = parseFloat(epochInput.value);
         const currentAltitude = parseFloat(altitudeInput.value);
 
-        const pointGeomag = new Geomag();
+        const pointGeomag = new CL_GEOMAG();
         pointGeomag.modelData = this.geomagInstance.modelData;
         Object.assign(pointGeomag, {
             model: this.geomagInstance.model.slice(), nmodel: this.geomagInstance.nmodel,
@@ -443,7 +443,7 @@ const MagMapApp = {
         return pointGeomag.getFieldComponents(currentEpoch, this.config.igdgc, currentAltitude, lat, lon);
     },
 
-    showCoordinateInfo: function(x: number, y: number, coords: [number, number], fieldData: GeomagFieldComponents): void {
+    SHOW_COORD_INFO: function(x: number, y: number, coords: [number, number], fieldData: GeomagFieldComponents): void {
         const [lon, lat] = coords;
         const fieldSelect = document.getElementById('fieldSelect') as HTMLSelectElement;
         const field = fieldSelect.value as FieldType;
@@ -474,11 +474,11 @@ const MagMapApp = {
             this.clickInfoWindow.html(html)
                 .style("left", `${x + 20}px`).style("top", `${y + 20}px`).style("display", "block");
 
-            this.clickInfoWindow.select(".close-btn").on("click", () => this.clearClickElements());
+            this.clickInfoWindow.select(".close-btn").on("click", () => this.CLR_CLICK_ELEMENTS());
         }
     },
 
-    drawIsolinesFromPoint: function(coords: [number, number], fieldData: GeomagFieldComponents): void {
+    DRAW_ISOLINES_FROM_POINT: function(coords: [number, number], fieldData: GeomagFieldComponents): void {
         if (!this.projection || !this.currentClickPoint) return;
 
         const svg = d3.select<SVGSVGElement, unknown>("#geomag-map");
@@ -504,7 +504,7 @@ const MagMapApp = {
             .attr("class", "isolines-label").text(`${currentValue.toFixed(field === 'totalfield' ? 0 : 1)}`);
     },
 
-    drawContourLayer: function(container: d3.Selection<SVGGElement, unknown, HTMLElement, any>, pathGenerator: d3.GeoPath, gridData: GridData, options: ContourOptions): void {
+    DRAW_CONTOUR_LAYER: function(container: d3.Selection<SVGGElement, unknown, HTMLElement, any>, pathGenerator: d3.GeoPath, gridData: GridData, options: ContourOptions): void {
         const { step, domain, colorFunc, majorMultiplier, labelCondition } = options;
         const levels = d3.range(domain[0], domain[1] + (step / 2), step);
         if (domain[0] === 0 && domain[1] === 0 && !levels.includes(0)) levels.push(0);
@@ -525,15 +525,15 @@ const MagMapApp = {
                     const ne_val = gridData.values[y * gridData.width + x + 1];
                     const sw_val = gridData.values[(y + 1) * gridData.width + x];
                     const se_val = gridData.values[(y + 1) * gridData.width + x + 1];
-                    const type = binaryToType(nw_val > level, ne_val > level, se_val > level, sw_val > level);
+                    const type = BIN_TO_TYPE(nw_val > level, ne_val > level, se_val > level, sw_val > level);
                     if (type === 0 || type === 15) continue;
 
                     let a, b, c, d;
                     if (this.isSmoothingEnabled) {
-                        a = { x: x + lerp(level, nw_val, ne_val), y: y };
-                        b = { x: x + 1, y: y + lerp(level, ne_val, se_val) };
-                        c = { x: x + lerp(level, sw_val, se_val), y: y + 1 };
-                        d = { x: x, y: y + lerp(level, nw_val, sw_val) };
+                        a = { x: x + LERP(level, nw_val, ne_val), y: y };
+                        b = { x: x + 1, y: y + LERP(level, ne_val, se_val) };
+                        c = { x: x + LERP(level, sw_val, se_val), y: y + 1 };
+                        d = { x: x, y: y + LERP(level, nw_val, sw_val) };
                     } else {
                         a = { x: x + 0.5, y: y }; b = { x: x + 1, y: y + 0.5 };
                         c = { x: x + 0.5, y: y + 1 }; d = { x: x, y: y + 0.5 };
@@ -566,7 +566,7 @@ const MagMapApp = {
         }
     },
 
-    drawBlackoutZones: function(container: d3.Selection<SVGGElement, unknown, HTMLElement, any>, pathGenerator: d3.GeoPath, paddedGridData: GridData): void {
+    DRAW_BLACKOUT_ZONES: function(container: d3.Selection<SVGGElement, unknown, HTMLElement, any>, pathGenerator: d3.GeoPath, paddedGridData: GridData): void {
         const zones = [
             { threshold: 2000, color: "rgba(255, 0, 0, 0.5)"},
             { threshold: 6000, color: "rgba(255, 165, 0, 0.4)"}
@@ -598,8 +598,8 @@ const MagMapApp = {
         });
     },
 
-    applyGaussianBlur: function(data: Float32Array, width: number, height: number, radius: number): void {
-        const blurKernel = this.createGaussianBlurKernel(radius);
+    APPLY_GAUSSIAN_BLUR: function(data: Float32Array, width: number, height: number, radius: number): void {
+        const blurKernel = this.CREATE_GAUSSIAN_BLUR_KERNEL(radius);
         const mid = Math.floor(blurKernel.length / 2);
         const temp = new Float32Array(data.length);
 
@@ -629,7 +629,7 @@ const MagMapApp = {
         }
     },
 
-    createGaussianBlurKernel: function(radius: number): number[] {
+    CREATE_GAUSSIAN_BLUR_KERNEL: function(radius: number): number[] {
         const sigma = radius / 3; const size = Math.floor(radius * 2) + 1;
         const kernel = new Array(size); const sigma22 = 2 * sigma * sigma;
         const radiusInt = Math.floor(radius); let sum = 0;
@@ -641,7 +641,7 @@ const MagMapApp = {
         return kernel;
     },
 
-    createPaddedGrid: function(gridData: GridData, paddingValue: number): GridData {
+    CREATE_PADDED_GRID: function(gridData: GridData, paddingValue: number): GridData {
         const { values, width, height } = gridData;
         const paddedWidth = width + 2; const paddedHeight = height + 2;
         const paddedValues = new Float32Array(paddedWidth * paddedHeight);
@@ -654,15 +654,15 @@ const MagMapApp = {
         return { values: paddedValues, width: paddedWidth, height: paddedHeight };
     },
 
-    addLegend: function (svgId: string, legendItems: LegendItem[]): void {
+    ADD_LEGEND: function (par_svgId: string, par_legendItems: LegendItem[]): void {
         const { mapHeight, mapWidth } = this.config;
-        const svg = d3.select<SVGSVGElement, unknown>(`#${svgId}`);
+        const svg = d3.select<SVGSVGElement, unknown>(`#${par_svgId}`);
         svg.selectAll("g.legend").remove();
         const legendGroup = svg.append("g").attr("class", "legend")
             .attr("transform", `translate(${mapWidth/2}, ${mapHeight - 30})`);
-        const itemWidth = 150; const totalWidth = legendItems.length * itemWidth;
+        const itemWidth = 150; const totalWidth = par_legendItems.length * itemWidth;
         const startX = -totalWidth / 2;
-        legendItems.forEach((item, i) => {
+        par_legendItems.forEach((item, i) => {
             const legendItem = legendGroup.append("g").attr("transform", `translate(${startX + i * itemWidth}, 0)`);
             legendItem.append("rect").attr("x", 0).attr("y", 0).attr("width", 18).attr("height", 18)
                 .style("fill", item.color).style("stroke", "black").style("stroke-width", 0.5);
@@ -671,7 +671,7 @@ const MagMapApp = {
         });
     },
 
-    loadModelIntoInstance: function (geomagInstance: Geomag, cofFileContent: string): boolean {
+    LOAD_MODEL_INTO_INSTANCE: function (geomagInstance: CL_GEOMAG, cofFileContent: string): boolean {
         try {
             geomagInstance.modelData = cofFileContent.split(/\r?\n/); let modelI = -1;
             geomagInstance.modelData.forEach((line, index) => {
@@ -700,12 +700,12 @@ const MagMapApp = {
             geomagInstance.nmodel = modelI + 1;
             return geomagInstance.nmodel > 0;
         } catch (e) {
-            console.error("Error loading model data into Geomag instance:", e);
+            console.error("Error loading model data into CL_GEOMAG instance:", e);
             return false;
         }
     },
 
-    generateGridData: function (commonArgs: CommonArgs, paramKey: ParamKey): GridData {
+    GENERATE_GRID_DATA: function (commonArgs: CommonArgs, paramKey: ParamKey): GridData {
         const { geomagInstance, epoch, altitudeKm } = commonArgs;
         const { igdgc, gridResolutionLat, gridResolutionLon } = this.config;
         const width = gridResolutionLon; const height = gridResolutionLat;
@@ -716,7 +716,7 @@ const MagMapApp = {
         for (let i = 0; i < height; i++) {
             for (let j = 0; j < width; j++) {
                 let lat = 90 - latAbsArr[i]; let lon = lonAbsArr[j] - 180;
-                const pointGeomag = new Geomag();
+                const pointGeomag = new CL_GEOMAG();
                 pointGeomag.modelData = geomagInstance.modelData;
                 Object.assign(pointGeomag, {
                     model: geomagInstance.model.slice(), nmodel: geomagInstance.nmodel,
@@ -735,38 +735,38 @@ const MagMapApp = {
         return { values, width, height };
     },
 
-    calculateDipPoles: async function (): Promise<DipPole[]> {
+    CALCULATE_DIP_POLES: async function (): Promise<DipPole[]> {
         const poles: DipPole[] = [];
 
         const findPole = async (startLat: number, latDir: 1 | -1): Promise<DipPole> => {
-            let bestPoint: DipPole = { name: '', lat: startLat, lon: 0, val: latDir * -Infinity };
+            let loc_best_point: DipPole = { name: '', lat: startLat, lon: 0, val: latDir * -Infinity };
 
             for (let latAbs = 0; latAbs <= 180; latAbs += 10) {
                 let lat = 90 - latAbs;
-                for (let lonAbs = 0; lonAbs < 360; lonAbs += 20) {
-                    let lon = lonAbs - 180;
-                    const field = this.getFieldAtPoint([lon, lat]);
-                    if (field && !isNaN(field.i_deg) && (latDir * field.i_deg > latDir * bestPoint.val!)) {
-                        bestPoint = { name:'', lat, latAbs, lon, lonAbs, val: field.i_deg };
+                for (let loc_lon_Abs = 0; loc_lon_Abs < 360; loc_lon_Abs += 20) {
+                    let loc_lon = loc_lon_Abs - 180;
+                    const field = this.GET_POINT_FIELD([loc_lon, lat]);
+                    if (field && !isNaN(field.i_deg) && (latDir * field.i_deg > latDir * loc_best_point.val!)) {
+                        loc_best_point = { name:'', lat, latAbs, lon: loc_lon, lonAbs: loc_lon_Abs, val: field.i_deg };
                     }
                 }
             }
 
-            let searchRadius = 5, searchStep = 1;
+            let loc_search_radius = 5, searchStep = 1;
             for (let i = 0; i < 3; i++) {
-                for (let latAbs = Math.max(0, bestPoint.latAbs! - searchRadius); latAbs <= Math.min(180, bestPoint.latAbs! + searchRadius); latAbs += searchStep) {
+                for (let latAbs = Math.max(0, loc_best_point.latAbs! - loc_search_radius); latAbs <= Math.min(180, loc_best_point.latAbs! + loc_search_radius); latAbs += searchStep) {
                     let lat = 90 - latAbs;
-                    for (let lonAbs = Math.max(0, bestPoint.lonAbs! - searchRadius); lonAbs <= Math.min(360, bestPoint.lonAbs! + searchRadius); lonAbs += searchStep) {
-                        let lon = lonAbs - 180;
-                        const field = this.getFieldAtPoint([lon, lat]);
-                        if (field && !isNaN(field.i_deg) && (latDir * field.i_deg > latDir * bestPoint.val!)) {
-                            bestPoint = { name:'', lat, latAbs, lon, lonAbs, val: field.i_deg };
+                    for (let lonAbs = Math.max(0, loc_best_point.lonAbs! - loc_search_radius); lonAbs <= Math.min(360, loc_best_point.lonAbs! + loc_search_radius); lonAbs += searchStep) {
+                        let lon = lonAbs - 180;  //#TODO
+                        const field = this.GET_POINT_FIELD([lon, lat]);
+                        if (field && !isNaN(field.i_deg) && (latDir * field.i_deg > latDir * loc_best_point.val!)) {
+                            loc_best_point = { name:'', lat, latAbs, lon, lonAbs, val: field.i_deg };
                         }
                     }
                 }
-                searchRadius /= 2; searchStep /= 2;
+                loc_search_radius /= 2; searchStep /= 2;
             }
-            return bestPoint;
+            return loc_best_point;
         };
 
         const northPole = await findPole(0, 1);
@@ -778,7 +778,7 @@ const MagMapApp = {
         return poles;
     },
 
-    drawGraticules: function(clippedContainer: d3.Selection<SVGGElement, unknown, HTMLElement, any>, unclippedContainer: d3.Selection<SVGSVGElement, unknown, HTMLElement, any>, projection: d3.GeoProjection, pathGenerator: d3.GeoPath): void {
+    DRAW_GRATICULES: function(clippedContainer: d3.Selection<SVGGElement, unknown, HTMLElement, any>, unclippedContainer: d3.Selection<SVGSVGElement, unknown, HTMLElement, any>, projection: d3.GeoProjection, pathGenerator: d3.GeoPath): void {
         const graticule = d3.geoGraticule();
 
         clippedContainer.append("path")
@@ -798,20 +798,20 @@ const MagMapApp = {
         const bounds = pathGenerator.bounds({ type: "Sphere" });
         const left = bounds[0][0], top = bounds[0][1], right = bounds[1][0], bottom = bounds[1][1];
 
-        for (let lon = -180; lon <= 180; lon += 30) {
-            const point = projection([lon, 0]);
+        for (let loc_lon = -180; loc_lon <= 180; loc_lon += 30) {
+            const point = projection([loc_lon, 0]);
             if (point) {
-                const label = lon === 0 ? "0°" : lon > 0 ? `${lon}°E` : `${Math.abs(lon)}°W`;
+                const label = loc_lon === 0 ? "0°" : loc_lon > 0 ? `${loc_lon}°E` : `${Math.abs(loc_lon)}°W`;
                 graticuleGroup.append("text").attr("x", point[0]).attr("y", top - 8).text(label);
                 graticuleGroup.append("text").attr("x", point[0]).attr("y", bottom + 15).text(label);
             }
         }
 
-        for (let lat = -90; lat <= 90; lat += 30) {
-            if (lat === 0) continue;
-            const point = projection([0, lat]);
+        for (let loc_lat = -90; loc_lat <= 90; loc_lat += 30) {
+            if (loc_lat === 0) continue;
+            const point = projection([0, loc_lat]);
             if (point) {
-                const label = lat > 0 ? `${lat}°N` : `${Math.abs(lat)}°S`;
+                const label = loc_lat > 0 ? `${loc_lat}°N` : `${Math.abs(loc_lat)}°S`;
                 graticuleGroup.append("text").attr("x", left - 20).attr("y", point[1]).text(label);
                 graticuleGroup.append("text").attr("x", right + 20).attr("y", point[1]).text(label);
             }
@@ -826,4 +826,4 @@ const MagMapApp = {
     }
 };
 
-MagMapApp.init();
+K_MAG_MAP_APP.init();
