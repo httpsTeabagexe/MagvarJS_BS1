@@ -328,17 +328,17 @@ const K_MAG_MAP_APP = {
         const SPHERE = { type: "Sphere" as const };
         const DIP_POLES = await this.CALCULATE_DIP_POLES();
         const COMMON_ARGS: CommonArgs = { geomagInstance: par_geomag_instance, epoch: par_current_epoch, altitudeKm: par_current_alt };
-        const fieldConfig = this.GET_FIELD_CONFIG(par_field, par_current_epoch);
+        const FIELD_CONFIG = this.GET_FIELD_CONFIG(par_field, par_current_epoch);
 
-        const { pathGenerator, clippedGroup } = this.DRAW_BASE_MAP(par_svg_id, LAND, SPHERE, fieldConfig.title, DIP_POLES);
-        const gridData = this.GENERATE_GRID_DATA(COMMON_ARGS, fieldConfig.paramKey);
+        const { pathGenerator, clippedGroup } = this.DRAW_BASE_MAP(par_svg_id, LAND, SPHERE, FIELD_CONFIG.title, DIP_POLES);
+        const GRID_DATA = this.GENERATE_GRID_DATA(COMMON_ARGS, FIELD_CONFIG.paramKey);
 
-        if (this.isSmoothingEnabled) this.APPLY_GAUSSIAN_BLUR(gridData.values, gridData.width, gridData.height, 1.5);
+        if (this.isSmoothingEnabled) this.APPLY_GAUSSIAN_BLUR(GRID_DATA.values, GRID_DATA.width, GRID_DATA.height, 1.5);
 
-        const passes = [fieldConfig.positiveOptions, fieldConfig.negativeOptions, fieldConfig.zeroOptions];
-        for (const options of passes) {
+        const PASSES = [FIELD_CONFIG.positiveOptions, FIELD_CONFIG.negativeOptions, FIELD_CONFIG.zeroOptions];
+        for (const options of PASSES) {
             if (options.domain[0] <= options.domain[1]) {
-                this.DRAW_CONTOUR_LAYER(clippedGroup, pathGenerator, gridData, options);
+                this.DRAW_CONTOUR_LAYER(clippedGroup, pathGenerator, GRID_DATA, options);
             }
         }
 
@@ -348,11 +348,11 @@ const K_MAG_MAP_APP = {
             const paddedGrid = this.CREATE_PADDED_GRID(hGridData, 100000);
             this.DRAW_BLACKOUT_ZONES(clippedGroup, pathGenerator, paddedGrid);
 
-            fieldConfig.legend.push({ color: "rgba(255, 165, 0, 0.4)", text: "Caution Zone (H < 6000 nT)" });
-            fieldConfig.legend.push({ color: "rgba(255, 0, 0, 0.5)", text: "Unreliable Zone (H < 2000 nT)" });
+            FIELD_CONFIG.legend.push({ color: "rgba(255, 165, 0, 0.4)", text: "Caution Zone (H < 6000 nT)" });
+            FIELD_CONFIG.legend.push({ color: "rgba(255, 0, 0, 0.5)", text: "Unreliable Zone (H < 2000 nT)" });
         }
 
-        this.ADD_LEGEND(par_svg_id, fieldConfig.legend);
+        this.ADD_LEGEND(par_svg_id, FIELD_CONFIG.legend);
     },
 
     DRAW_BASE_MAP: function (par_svg_id: string, par_land_features: FeatureCollection, par_sphere_feature: {
@@ -371,12 +371,12 @@ const K_MAG_MAP_APP = {
            .style("background-color", "#e0f3ff");
 
         const clipPathId = `${par_svg_id}-clip-path`;
-        svg.append("defs").append("clipPath")
-            .attr("id", clipPathId)
-            .append("path")
-            .datum(par_sphere_feature)
-            .attr("d", pathGenerator);
+        const defs = svg.select("defs").empty() ? svg.append("defs") : svg.select("defs");
+        defs.select(`#${clipPathId}`).remove();
+        const clip = defs.append("clipPath").attr("id", clipPathId);
+        clip.append("rect").attr("x", 0).attr("y", 0).attr("width", mapWidth).attr("height", mapHeight);
 
+        svg.select(`#${par_svg_id}-clipped-group`).remove();
         const clippedGroup = svg.append("g")
             .attr("id", `${par_svg_id}-clipped-group`)
             .attr("clip-path", `url(#${clipPathId})`);
@@ -390,12 +390,15 @@ const K_MAG_MAP_APP = {
             .style("stroke", "#336633")
             .style("stroke-width", 0.5);
 
-        svg.append("path")
-            .datum(par_sphere_feature)
-            .attr("d", pathGenerator)
-            .style("fill", "none")
-            .style("stroke", "#333")
-            .style("stroke-width", 1);
+        // Optional outer border; safe to skip if projection returns invalid sphere path
+        try {
+            svg.append("path")
+                .datum(par_sphere_feature)
+                .attr("d", pathGenerator)
+                .style("fill", "none")
+                .style("stroke", "#333")
+                .style("stroke-width", 1);
+        } catch (_) { /* ignore */ }
 
         svg.append("text").attr("class", "map-title")
            .attr("x", mapWidth / 2).attr("y", 20).attr("text-anchor", "middle")
@@ -576,14 +579,12 @@ const K_MAG_MAP_APP = {
                 }
             }
             if (lines.length > 0) {
-                const GEOJSON = {
-                    type: "MultiLineString",
-                    coordinates: lines.map(line => {
-                        const start = toGeo(line[0]); const end = toGeo(line[1]);
-                        return (!start || !end || Math.abs(start[0] - end[0]) > 180) ? [] : [[start, end]];
-                    }).filter(d => d.length > 0)
-                };
-                CONTOUR_GROUP.append("path").datum(GEOJSON as any).attr("d", par_path_generator as any)
+                const coords = lines.map(line => {
+                    const start = toGeo(line[0]); const end = toGeo(line[1]);
+                    return (!start || !end || Math.abs(start[0] - end[0]) > 180) ? null : [start, end];
+                }).filter((d): d is [number, number][] => !!d);
+                const GEOJSON = { type: "MultiLineString", coordinates: coords } as any;
+                CONTOUR_GROUP.append("path").datum(GEOJSON).attr("d", par_path_generator as any)
                     .style("fill", "none").style("stroke", colorFunc(LEVEL))
                     .style("stroke-width", labelCondition(LEVEL, step, majorMultiplier) ? 2.0 : 1.0);
             }
@@ -592,8 +593,8 @@ const K_MAG_MAP_APP = {
 
     DRAW_BLACKOUT_ZONES: function(container: d3.Selection<SVGGElement, unknown, HTMLElement, any>, pathGenerator: d3.GeoPath, paddedGridData: GridData): void {
         const ZONES = [
-            { threshold: 2000, color: "rgba(255, 0, 0, 0.5)"},
-            { threshold: 6000, color: "rgba(255,165,0,0.4)"}
+            { threshold: 2000, color: "rgba(255, 0, 0, 0.5)", cls: "unreliable-zone"},
+            { threshold: 6000, color: "rgba(255,165,0,0.4)", cls: "caution-zone"}
         ];
         const { values: paddedValues, width: paddedWidth, height: paddedHeight } = paddedGridData;
         const ORIGINAL_WIDTH = paddedWidth - 2; const originalHeight = paddedHeight - 2;
@@ -610,14 +611,19 @@ const K_MAG_MAP_APP = {
             return { type: "MultiPolygon", coordinates: newCoordinates, value: par_geometry.value };
         };
 
-        const MAP_BACKGROUND_COLOR = d3.select("#geomag-map").style("background-color");
+        const svg = d3.select<SVGSVGElement, unknown>("#geomag-map");
+        const mapWidth = +svg.attr("width");
+        const mapHeight = +svg.attr("height");
+        const MAP_BACKGROUND_COLOR = svg.style("background-color");
 
         ZONES.forEach(zone => {
-            container.append("path").datum({ type: "Sphere" } as any).attr("d", pathGenerator as any).style("fill", zone.color);
+            const g = container.append("g").attr("class", zone.cls);
+            // Base overlay fill covering whole map area
+            g.append("rect").attr("x", 0).attr("y", 0).attr("width", mapWidth).attr("height", mapHeight)
+                .style("fill", zone.color);
             const safeContours = d3.contours().size([paddedWidth, paddedHeight]).thresholds([zone.threshold]);
-            // Convert Float32Array to Array for d3.contours
             const safeGeometries = safeContours(Array.from(paddedValues)).map(GEO_TRANSFORM);
-            container.append("g").selectAll("path").data(safeGeometries).enter().append("path")
+            g.selectAll("path").data(safeGeometries).enter().append("path")
                 .attr("d", pathGenerator as any).style("fill", MAP_BACKGROUND_COLOR);
         });
     },
@@ -865,3 +871,4 @@ const K_MAG_MAP_APP = {
 };
 
 K_MAG_MAP_APP.INIT();
+
