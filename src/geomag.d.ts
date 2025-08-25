@@ -2,7 +2,7 @@
 // This file describes the shape of the existing CL_GEOMAG class from geomag.js
 
 // Represents the components of the geomagnetic field at a given location and time
-interface GeomagFieldComponents {
+interface GEOMAG_FIELD_COMPONENTS {
     d_deg: number; // Declination in degrees
     i_deg: number; // Inclination in degrees
     h: number;     // Horizontal intensity
@@ -36,7 +36,7 @@ declare class CL_GEOMAG {
      * @param par_alt_Km - Altitude in kilometers
      * @param par_lat - Latitude in degrees
      * @param par_lon - Longitude in degrees
-     * @returns GeomagFieldComponents object with field values
+     * @returns GEOMAG_FIELD_COMPONENTS object with field values
      */
-    getFieldComponents(par_epoch: number, par_igdgc: number, par_alt_Km: number, par_lat: number, par_lon: number): GeomagFieldComponents;
+    getFieldComponents(par_epoch: number, par_igdgc: number, par_alt_Km: number, par_lat: number, par_lon: number): GEOMAG_FIELD_COMPONENTS;
 }

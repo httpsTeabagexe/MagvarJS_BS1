@@ -13,6 +13,7 @@
   "main": "src/geomag.js",
   "scripts": {
     "build": "tsc",
+    "postbuild": "node scripts/copy-static.js",
     "start": "npm run build && npx serve public",
     "dev": "tsc --watch"
   },

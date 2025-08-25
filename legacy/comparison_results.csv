@@ -1,4 +1,4 @@
-lat,loc_lon,loc_alt,date,D_js,I_js,F_js,D_exe,I_exe,F_exe,D_diff,I_diff,F_diff
+loc_lat,loc_lon,loc_alt,date,D_js,I_js,F_js,D_exe,I_exe,F_exe,D_diff,I_diff,F_diff
 -80,-180,0,2020,-75.03984286891027,81.80184480782867,56705.16298880834,NaN,NaN,NaN,NaN,NaN,NaN
 -80,-180,0,2022.5,-75.24339568883835,81.75228009577742,56585.69318557119,NaN,NaN,NaN,NaN,NaN,NaN
 -80,-180,0,2025,-75.4453767166535,81.70240360930939,56466.28057826588,NaN,NaN,NaN,NaN,NaN,NaN
