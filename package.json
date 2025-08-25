@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "@google/genai": "^1.15.0",
     "@types/topojson": "^3.2.6",
     "d3": "^7.9.0",
     "geomagnetism": "^0.2.0",
@@ -12,7 +13,10 @@
   "version": "1.0.0",
   "main": "src/geomag.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsc",
+    "postbuild": "node scripts/copy-static.js",
+    "start": "npm run build && npx serve public",
+    "dev": "tsc --watch"
   },
   "repository": {
     "type": "git",
