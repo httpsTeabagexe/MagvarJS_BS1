@@ -209,8 +209,51 @@ const K_MAG_MAP_APP = {
 
     CLR_OVERLAYS: function(): void {
         const svg = d3.select("#geomag-map");
-        svg.selectAll(".contours-manual, .caution-zone, .unreliable-zone, .legend").remove();
+    // Remove contour overlays, uncertainty zones, legend, map title, dip-pole markers and clipped group
+    svg.selectAll(".contours-manual, .caution-zone, .unreliable-zone, .legend, text.map-title, text.dip-pole, #geomag-map-clipped-group").remove();
+    // Also remove any temporary groups/titles/dip-poles created with suffixes
+    svg.selectAll("[id^=geomag-map-clipped-group-], [class^=map-title-], [class^=dip-pole]").remove();
+    // Remove clipPaths inside defs that may reference previous clipped groups
+    svg.selectAll("defs clipPath").remove();
         this.CLR_CLICK_ELEMENTS();
+    },
+
+    SWAP_OVERLAYS: function(par_svg_id: string, suffix: string): void {
+        const svg = d3.select<SVGSVGElement, unknown>(`#${par_svg_id}`);
+        // Remove the main clipped group and title/dip-pole classes, then rename temp elements to main names
+        const mainClippedId = `${par_svg_id}-clipped-group`;
+        const tempClippedId = `${par_svg_id}-clipped-group${suffix}`;
+
+        // Remove any existing main group
+        svg.select(`#${mainClippedId}`).remove();
+        // Rename temp group to main id
+        svg.select(`#${tempClippedId}`).attr("id", mainClippedId);
+
+    // Remove existing main title and dip-pole markers (support both text and group variants)
+    svg.selectAll("g.map-title, text.map-title").remove();
+    svg.selectAll("g.dip-pole, text.dip-pole").remove();
+
+    // Rename temp title and dip-poles (if created with suffix). Support both g.* and text.* from older code
+    svg.selectAll(`g.map-title${suffix}, text.map-title${suffix}`).attr("class", "map-title");
+    svg.selectAll(`g.dip-pole${suffix}, text.dip-pole${suffix}`).attr("class", "dip-pole");
+
+        // Remove temp clipPath (old ones) and keep only the suffix-less clipPath
+        svg.selectAll("defs clipPath").each(function() {
+            const node = d3.select(this as any);
+            const id = node.attr("id") || "";
+            if (id.endsWith(suffix)) {
+                // rename to base id
+                node.attr("id", id.replace(suffix, ""));
+            } else {
+                // remove other old clipPaths
+                node.remove();
+            }
+        });
+
+    // Remove any temporary legend groups (rename to base class)
+    svg.selectAll(`g.legend${suffix ? suffix : ''}`).attr("class", "legend");
+        // Clean up any other temp elements that start with suffix
+        svg.selectAll(`[id$='${suffix}'], [class$='${suffix}']`).remove();
     },
 
     IS_POINT_IN_MAP: function(par_x: number, par_y: number): boolean {
@@ -316,7 +359,8 @@ const K_MAG_MAP_APP = {
     },
 
     RENDER_GEOMAG_MAP: async function(par_svg_id: string, par_geomag_instance: CL_GEOMAG, par_current_epoch: number, par_current_alt: number, par_field: FieldType): Promise<void> {
-        this.CLR_OVERLAYS();
+        // Do not clear overlays immediately: keep existing overlay visible
+        // while we render a new temporary overlay, then swap to avoid flicker
 
         const WORLD = await d3.json<Topology>(this.config.worldAtlasURL);
         if (!WORLD || !WORLD.objects) {
@@ -330,7 +374,8 @@ const K_MAG_MAP_APP = {
         const COMMON_ARGS: CommonArgs = { geomagInstance: par_geomag_instance, epoch: par_current_epoch, altitudeKm: par_current_alt };
         const FIELD_CONFIG = this.GET_FIELD_CONFIG(par_field, par_current_epoch);
 
-        const { pathGenerator, clippedGroup } = this.DRAW_BASE_MAP(par_svg_id, LAND, SPHERE, FIELD_CONFIG.title, DIP_POLES);
+    const suffix = `-new-${Date.now()}`;
+    const { pathGenerator, clippedGroup } = this.DRAW_BASE_MAP(par_svg_id, LAND, SPHERE, FIELD_CONFIG.title, DIP_POLES, suffix);
         const GRID_DATA = this.GENERATE_GRID_DATA(COMMON_ARGS, FIELD_CONFIG.paramKey);
 
         if (this.isSmoothingEnabled) this.APPLY_GAUSSIAN_BLUR(GRID_DATA.values, GRID_DATA.width, GRID_DATA.height, 1.5);
@@ -342,7 +387,7 @@ const K_MAG_MAP_APP = {
             }
         }
 
-        if (this.isUncertaintyVisible && (par_field === 'declination' || par_field === 'inclination')) {
+    if (this.isUncertaintyVisible && (par_field === 'declination' || par_field === 'inclination')) {
             this.UPD_STATUS('Calculating blackout zones...', false);
             const hGridData = this.GENERATE_GRID_DATA(COMMON_ARGS, 'h');
             const paddedGrid = this.CREATE_PADDED_GRID(hGridData, 100000);
@@ -352,12 +397,15 @@ const K_MAG_MAP_APP = {
             FIELD_CONFIG.legend.push({ color: "rgba(255, 0, 0, 0.5)", text: "Unreliable Zone (H < 2000 nT)" });
         }
 
-        this.ADD_LEGEND(par_svg_id, FIELD_CONFIG.legend);
+    this.ADD_LEGEND(par_svg_id, FIELD_CONFIG.legend, suffix);
+
+    // Swap temp overlay into place and remove old overlay elements
+    this.SWAP_OVERLAYS(par_svg_id, suffix);
     },
 
     DRAW_BASE_MAP: function (par_svg_id: string, par_land_features: FeatureCollection, par_sphere_feature: {
         type: "Sphere"
-    }, title: string, dipPoles: DipPole[]) {
+    }, title: string, dipPoles: DipPole[], suffix?: string) {
         const { mapWidth, mapHeight } = this.config;
         const svg = d3.select<SVGSVGElement, unknown>(`#${par_svg_id}`);
 
@@ -370,15 +418,17 @@ const K_MAG_MAP_APP = {
            .attr("viewBox", [0, 0, mapWidth, mapHeight])
            .style("background-color", "#e0f3ff");
 
-        const clipPathId = `${par_svg_id}-clip-path`;
+        const clipPathId = `${par_svg_id}-clip-path${suffix ? suffix : ''}`;
         const defs = svg.select("defs").empty() ? svg.append("defs") : svg.select("defs");
         defs.select(`#${clipPathId}`).remove();
         const clip = defs.append("clipPath").attr("id", clipPathId);
         clip.append("rect").attr("x", 0).attr("y", 0).attr("width", mapWidth).attr("height", mapHeight);
 
-        svg.select(`#${par_svg_id}-clipped-group`).remove();
+        // Create a temp clipped group if suffix provided, otherwise replace main group
+        const clippedGroupId = `${par_svg_id}-clipped-group${suffix ? suffix : ''}`;
+        svg.select(`#${clippedGroupId}`).remove();
         const clippedGroup = svg.append("g")
-            .attr("id", `${par_svg_id}-clipped-group`)
+            .attr("id", clippedGroupId)
             .attr("clip-path", `url(#${clipPathId})`);
 
         this.DRAW_GRATICULES(clippedGroup, svg, this.projection, pathGenerator);
@@ -400,16 +450,59 @@ const K_MAG_MAP_APP = {
                 .style("stroke-width", 1);
         } catch (_) { /* ignore */ }
 
-        svg.append("text").attr("class", "map-title")
-           .attr("x", mapWidth / 2).attr("y", 20).attr("text-anchor", "middle")
-           .style("font-size", "18px").style("font-family", "Arial, sans-serif").text(title);
+    // Map title - add semi-transparent background for contrast and avoid stacking using suffix
+    const titleGroup = svg.append("g").attr("class", `map-title${suffix ? suffix : ''}`)
+        .attr("transform", `translate(${mapWidth/2}, 0)`)
+        .style("pointer-events", "none");
+    // background rectangle behind title for readability
+    titleGroup.append("rect")
+        .attr("x", -350).attr("y", 8)
+        .attr("width", 700).attr("height", 28)
+        .attr("rx", 6).attr("ry", 6)
+        .style("fill", "rgba(255,255,255,0.85)")
+        .style("stroke", "#ccc").style("stroke-width", 0.5);
+    titleGroup.append("text")
+        .attr("x", 0).attr("y", 28).attr("text-anchor", "middle")
+        .style("font-size", "18px").style("font-family", "Arial, sans-serif").style("fill", "#222")
+        .text(title);
 
         if (dipPoles) {
-            svg.selectAll("text.dip-pole").data(dipPoles).enter().append("text")
-                .attr("transform", d => `translate(${this.projection!([d.lon, d.lat])})`)
-                .style("fill", "black").style("font-size", "24px").style("text-anchor", "middle").attr("dy", ".35em")
-                .style("paint-order", "stroke").style("stroke", "white").style("stroke-width", "2px")
-                .text("✱");
+            // Render dip-poles as groups: marker + label offset for readability
+            const poleGroups = svg.selectAll(`g.dip-pole${suffix ? suffix : ''}`).data(dipPoles).enter()
+                .append("g").attr("class", `dip-pole${suffix ? suffix : ''}`)
+                .style("pointer-events", "none");
+
+            const self = this as any;
+            poleGroups.each(function(this: SVGGElement, d: DipPole, i: number, nodes: SVGGElement[] | ArrayLike<SVGGElement>) {
+                const p = self.projection!([d.lon, d.lat]);
+                const g = d3.select(nodes[i]);
+                if (!p || !isFinite(p[0]) || !isFinite(p[1])) return;
+                g.attr("transform", `translate(${p[0]}, ${p[1]})`);
+                // small star marker
+                g.append("text")
+                    .attr("x", 0).attr("y", 0).attr("text-anchor", "middle")
+                    .style("font-size", "18px").style("fill", "#000")
+                    .style("paint-order", "stroke").style("stroke", "white").style("stroke-width", "2px")
+                    .text("✱");
+                // label box + text to the right
+                const labelX = 12; const labelY = -6;
+                const labelText = `${d.name}${d.lat !== undefined ? ` ${d.lat.toFixed(1)}°, ${d.lon.toFixed(1)}°` : ''}`;
+                const lbl = g.append("text")
+                    .attr("x", labelX).attr("y", labelY)
+                    .attr("text-anchor", "start")
+                    .style("font-size", "12px").style("font-family", "Arial, sans-serif").style("fill", "#111")
+                    .text(labelText);
+                // create a subtle background rect behind label for contrast
+                try {
+                    const bbox = (lbl.node() as any).getBBox();
+                    g.insert("rect", "text")
+                        .attr("x", bbox.x - 4 + labelX).attr("y", bbox.y - 2 + labelY)
+                        .attr("width", bbox.width + 8).attr("height", bbox.height + 4)
+                        .attr("rx", 3).attr("ry", 3)
+                        .style("fill", "rgba(255,255,255,0.85)")
+                        .style("stroke", "#ddd").style("stroke-width", 0.5);
+                } catch (_) { /* ignore if getBBox fails in some environments */ }
+            });
         }
 
         svg.on("click", (event: MouseEvent) => {
@@ -534,7 +627,7 @@ const K_MAG_MAP_APP = {
     DRAW_CONTOUR_LAYER: function(par_container: d3.Selection<SVGGElement, unknown, HTMLElement, any>, par_path_generator: d3.GeoPath, par_grid_data: GridData, par_options: ContourOptions): void {
         const { step, domain, colorFunc, majorMultiplier, labelCondition } = par_options;
         const LEVELS = d3.range(domain[0], domain[1] + (step / 2), step);
-        if (domain[0] === 0 && domain[1] === 0 && !LEVELS.includes(0)) LEVELS.push(0);
+    if (domain[0] === 0 && domain[1] === 0 && LEVELS.indexOf(0) === -1) LEVELS.push(0);
         if (LEVELS.length === 0) return;
 
         const CONTOUR_GROUP = par_container.append("g").attr("class", `contours-manual`);
@@ -686,15 +779,15 @@ const K_MAG_MAP_APP = {
         return { values: paddedValues, width: paddedWidth, height: paddedHeight };
     },
 
-    ADD_LEGEND: function (par_svg_id: string, par_legend_items: LegendItem[]): void {
+    ADD_LEGEND: function (par_svg_id: string, par_legend_items: LegendItem[], suffix?: string): void {
         const { mapHeight, mapWidth } = this.config;
         const svg = d3.select<SVGSVGElement, unknown>(`#${par_svg_id}`);
-        svg.selectAll("g.legend").remove();
-        const legendGroup = svg.append("g").attr("class", "legend")
+        svg.selectAll(`g.legend${suffix ? suffix : ''}`).remove();
+        const legendGroup = svg.append("g").attr("class", `legend${suffix ? suffix : ''}`)
             .attr("transform", `translate(${mapWidth/2}, ${mapHeight - 30})`);
         const itemWidth = 150; const totalWidth = par_legend_items.length * itemWidth;
         const startX = -totalWidth / 2;
-        par_legend_items.forEach((item, i) => {
+    par_legend_items.forEach((item, i) => {
             const legendItem = legendGroup.append("g").attr("transform", `translate(${startX + i * itemWidth}, 0)`);
             legendItem.append("rect").attr("x", 0).attr("y", 0).attr("width", 18).attr("height", 18)
                 .style("fill", item.color).style("stroke", "black").style("stroke-width", 0.5);
@@ -841,13 +934,15 @@ const K_MAG_MAP_APP = {
             }
         } catch (_) { /* ignore */ }
 
-        // Longitude labels (top & bottom)
+        // Longitude labels (top & bottom) - place just outside map box
+        const topY = Math.max(12, loc_top - 10);
+        const bottomY = Math.min(this.config.mapHeight - 6, loc_bottom + 14);
         for (let loc_lon = -180; loc_lon <= 180; loc_lon += 30) {
             const point = par_projection([loc_lon, 0]);
-            if (point && isFinite(point[1])) {
+            if (point && isFinite(point[0])) {
                 const label = loc_lon === 0 ? "0°" : loc_lon > 0 ? `${loc_lon}°E` : `${Math.abs(loc_lon)}°W`;
-                graticuleGroup.append("text").attr("x", point[0]).attr("y", loc_top).text(label);
-                graticuleGroup.append("text").attr("x", point[0]).attr("y", loc_bottom).text(label);
+                graticuleGroup.append("text").attr("x", point[0]).attr("y", topY).text(label).attr("text-anchor", "middle");
+                graticuleGroup.append("text").attr("x", point[0]).attr("y", bottomY).text(label).attr("text-anchor", "middle");
             }
         }
 
@@ -857,8 +952,11 @@ const K_MAG_MAP_APP = {
             const point = par_projection([0, loc_lat]);
             if (point && isFinite(point[1])) {
                 const label = loc_lat > 0 ? `${loc_lat}°N` : `${Math.abs(loc_lat)}°S`;
-                graticuleGroup.append("text").attr("x", loc_left + 15).attr("y", point[1]).text(label).attr("text-anchor", "start");
-                graticuleGroup.append("text").attr("x", loc_right - 15).attr("y", point[1]).text(label).attr("text-anchor", "end");
+                // place left labels just outside left edge, right labels outside right edge
+                const leftX = Math.max(6, loc_left - 8);
+                const rightX = Math.min(this.config.mapWidth - 6, loc_right + 8);
+                graticuleGroup.append("text").attr("x", leftX).attr("y", point[1]).text(label).attr("text-anchor", "start");
+                graticuleGroup.append("text").attr("x", rightX).attr("y", point[1]).text(label).attr("text-anchor", "end");
             }
         }
 
