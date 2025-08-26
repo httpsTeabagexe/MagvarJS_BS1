@@ -593,38 +593,40 @@ const K_MAG_MAP_APP = {
 
     DRAW_BLACKOUT_ZONES: function(container: d3.Selection<SVGGElement, unknown, HTMLElement, any>, pathGenerator: d3.GeoPath, paddedGridData: GridData): void {
         const ZONES = [
-            { threshold: 2000, color: "rgba(255, 0, 0, 0.5)", cls: "unreliable-zone"},
-            { threshold: 6000, color: "rgba(255,165,0,0.4)", cls: "caution-zone"}
+            { threshold: 2000, color: "rgba(255, 0, 0, 0.5)", cls: "unreliable-zone" },
+            { threshold: 6000, color: "rgba(255,165,0,0.4)", cls: "caution-zone" }
         ];
         const { values: paddedValues, width: paddedWidth, height: paddedHeight } = paddedGridData;
-        const ORIGINAL_WIDTH = paddedWidth - 2; const originalHeight = paddedHeight - 2;
+        const ORIGINAL_WIDTH = paddedWidth - 2;
+        const ORIGINAL_HEIGHT = paddedHeight - 2;
 
+        // Трансформация координат для d3.contours
         const GEO_TRANSFORM = (par_geometry: any): any => {
             const TRANSFORM_POINT = (point: [number, number]): [number, number] => {
                 const lon = ((point[0] - 1) / (ORIGINAL_WIDTH - 1)) * 360 - 180;
-                const lat = 90 - ((point[1] - 1) / (originalHeight - 1)) * 180;
+                const lat = 90 - ((point[1] - 1) / (ORIGINAL_HEIGHT - 1)) * 180;
                 return [lon, lat];
             };
+            // d3.contours возвращает MultiPolygon с массивом полигонов
             const newCoordinates = par_geometry.coordinates.map((polygon: any) =>
                 polygon.map((ring: any) => ring.map(TRANSFORM_POINT))
             );
             return { type: "MultiPolygon", coordinates: newCoordinates, value: par_geometry.value };
         };
 
-        const svg = d3.select<SVGSVGElement, unknown>("#geomag-map");
-        const mapWidth = +svg.attr("width");
-        const mapHeight = +svg.attr("height");
-        const MAP_BACKGROUND_COLOR = svg.style("background-color");
-
         ZONES.forEach(zone => {
             const g = container.append("g").attr("class", zone.cls);
-            // Base overlay fill covering whole map area
-            g.append("rect").attr("x", 0).attr("y", 0).attr("width", mapWidth).attr("height", mapHeight)
-                .style("fill", zone.color);
-            const safeContours = d3.contours().size([paddedWidth, paddedHeight]).thresholds([zone.threshold]);
-            const safeGeometries = safeContours(Array.from(paddedValues)).map(GEO_TRANSFORM);
-            g.selectAll("path").data(safeGeometries).enter().append("path")
-                .attr("d", pathGenerator as any).style("fill", MAP_BACKGROUND_COLOR);
+            // Получаем контуры для текущего порога
+            const contours = d3.contours().size([paddedWidth, paddedHeight]).thresholds([zone.threshold]);
+            const geometries = contours(Array.from(paddedValues)).map(GEO_TRANSFORM);
+            // Рисуем только сами зоны неопределённости
+            g.selectAll("path")
+                .data(geometries)
+                .enter()
+                .append("path")
+                .attr("d", pathGenerator as any)
+                .style("fill", zone.color)
+                .style("stroke", "none");
         });
     },
 
