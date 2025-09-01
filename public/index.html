@@ -11,10 +11,12 @@
     <script src="libs/d3-geo-projection.min.js"></script>
 </head>
 <body>
-<div class="main-container">
-    <h1>Interactive Geomagnetic Field Maps</h1>
 
-    <!-- Use a <form> for semantic structure -->
+<!-- Menu toggle to open/close controls panel -->
+<button class="menu-toggle" id="menuToggle" aria-label="Toggle Controls Panel">☰</button>
+
+<div class="main-container" id="controlsPanel">
+    <h1>Geomagnetic Field</h1>
     <form class="controls-form" onsubmit="return false;">
         <div class="control-group">
             <label for="fieldSelect" title="Geomagnetic field component to display. Declination is the angle between magnetic north and true north.">Field</label>
@@ -26,32 +28,55 @@
         </div>
         <div class="control-group">
             <label for="epochInput" title="The date for the model calculation. The model changes over time.">Epoch (e.g., 2025.0)</label>
-            <input type="number" id="epochInput" value="2025.0" STEP="0.1" min="0">
+            <input type="number" id="epochInput" value="2025.0" step="0.1" min="0">
         </div>
         <div class="control-group">
             <label for="altitudeInput" title="Altitude in kilometers above sea level.">Altitude (km)</label>
-            <input type="number" id="altitudeInput" value="0" STEP="10" min="0">
+            <input type="number" id="altitudeInput" value="0" step="10" min="0">
         </div>
         <div class="control-group">
             <label for="gridStepInput">Grid Step Resolution (°)</label>
-            <input type="number" id="gridStepInput" value="2" STEP="1" min="1" max="30">
+            <input type="number" id="gridStepInput" value="2" step="1" min="1" max="30">
         </div>
-
-        <!-- Buttons have type="button" to prevent form submission -->
+        <div class="control-group">
+            <label for="projectionSelect">Projection</label>
+            <select id="projectionSelect">
+                <option value="mercator">Mercator</option>
+                <option value="globe">Globe</option>
+            </select>
+        </div>
         <button type="button" id="renderButton">Render Map</button>
-
-        <!-- Toggle buttons now have fixed text and an aria-pressed state -->
         <button type="button" id="smoothingButton" aria-pressed="true">Toggle Smoothing</button>
         <button type="button" id="uncertaintyButton" aria-pressed="false">Toggle Uncertainty</button>
-
         <div id="status">Enter parameters and click "Render Map".</div>
     </form>
-
-    <div class="map-container">
-        <svg id="geomag-map"></svg>
-    </div>
 </div>
 
-    <script type="module" src="../dist/main.js"></script>
+<div class="map-container">
+    <svg id="geomag-map"></svg>
+</div>
+
+<!-- Load the compiled application module from public/dist -->
+<script type="module" src="./dist/main.js"></script>
+
+<!-- Small script to toggle the controls panel; does NOT override render button handlers implemented in main.js -->
+<script>
+    (function(){
+        const menuToggle = document.getElementById('menuToggle');
+        const controlsPanel = document.getElementById('controlsPanel');
+        if (!menuToggle || !controlsPanel) return;
+        menuToggle.addEventListener('click', () => {
+            controlsPanel.classList.toggle('open');
+        });
+        // Close panel on outside click
+        document.addEventListener('click', (event) => {
+            const target = event.target;
+            if (!controlsPanel.contains(target) && !menuToggle.contains(target) && controlsPanel.classList.contains('open')) {
+                controlsPanel.classList.remove('open');
+            }
+        });
+    })();
+</script>
+
 </body>
 </html>

@@ -1,9 +1,5 @@
-// Removed module imports for d3/topojson; provide loose type aliases to avoid module context.
-// import type { Topology } from 'topojson-specification';
-// import { type FeatureCollection, type Geometry, type GeoJsonProperties } from 'geojson';
-// Type aliases (loose) to keep TypeScript happy without turning file into a module.
-// If stronger typing needed, reintroduce imports and add a bundler.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// main.js
+
 type Topology = any; // eslint-disable-line @typescript-eslint/no-explicit-any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type FeatureCollection = any; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -82,8 +78,8 @@ const K_MAG_MAP_APP = {
         mapHeight: 700,
         gridResolutionLat: 90,
         gridResolutionLon: 180,
-        worldAtlasURL: '/data/countries-110m.json',
-        cofURL: '/data/IGRF14.COF'
+        worldAtlasURL: 'data/countries-110m.json', // Relative path
+        cofURL: 'data/IGRF14.COF' // Relative path
     },
 
     // --- Application State ---
@@ -93,24 +89,48 @@ const K_MAG_MAP_APP = {
     isUncertaintyVisible: false,
 
     projection: null as d3.GeoProjection | null,
+    projectionType: 'mercator' as 'mercator' | 'globe',
     clickInfoWindow: null as d3.Selection<HTMLDivElement, unknown, HTMLElement, any> | null,
     currentClickPoint: null as { x: number; y: number; lon: number; lat: number } | null,
     currentIsolines: null as d3.Selection<SVGGElement, unknown, HTMLElement, any> | null,
+    statusOverlay: null as d3.Selection<HTMLDivElement, unknown, HTMLElement, any> | null,
+
 
     // --- Main Initializer ---
     INIT: function() {
-        document.addEventListener('DOMContentLoaded', () => {
+        const runInit = () => {
             console.log("Initializing...");
             try {
                 this.clickInfoWindow = d3.select("body").append("div")
                     .attr("class", "coordinate-info");
+
+                // If the page does not provide a projection selector, create a small floating control.
+                if (!document.getElementById('projectionSelect')) {
+                    d3.select('body').append('div')
+                        .attr('id', 'projection-control')
+                        .style('position', 'fixed')
+                        .style('right', '12px')
+                        .style('top', '12px')
+                        .style('background', 'rgba(255,255,255,0.9)')
+                        .style('padding', '6px 8px')
+                        .style('border-radius', '6px')
+                        .style('box-shadow', '0 1px 4px rgba(0,0,0,0.2)')
+                        .html(`<label style="font-family:Arial, sans-serif; font-size:12px;">Projection: <select id="projectionSelect"><option value="mercator">Mercator</option><option value="globe">Globe</option></select></label>`);
+                }
 
                 this.SETUP_UI_LISTENERS();
                 this.INIT_GEOMAG();
             } catch (error) {
                 console.error("Initialization error:", error);
             }
-        });
+        };
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', runInit);
+        } else {
+            // DOM already loaded — run immediately
+            runInit();
+        }
     },
 
     // --- UI and Event Handling ---
@@ -123,12 +143,12 @@ const K_MAG_MAP_APP = {
             uncertaintyButton.disabled = true;
             uncertaintyButton.setAttribute('aria-pressed', 'false');
             uncertaintyButton.style.cursor = 'not-allowed';
-            uncertaintyButton.style.backgroundColor = '#ccc';
+            uncertaintyButton.style.backgroundColor = '#666'; // Darker disabled look
         } else {
             uncertaintyButton.disabled = false;
             uncertaintyButton.setAttribute('aria-pressed', String(this.isUncertaintyVisible));
             uncertaintyButton.style.cursor = 'pointer';
-            uncertaintyButton.style.backgroundColor = '';
+            uncertaintyButton.style.backgroundColor = ''; // Revert to default
         }
     },
 
@@ -137,8 +157,17 @@ const K_MAG_MAP_APP = {
         const fieldSelect = document.getElementById('fieldSelect') as HTMLSelectElement;
         const smoothingButton = document.getElementById('smoothingButton') as HTMLButtonElement;
         const uncertaintyButton = document.getElementById('uncertaintyButton') as HTMLButtonElement;
+        const projectionSelect = document.getElementById('projectionSelect') as HTMLSelectElement | null;
 
         renderButton.addEventListener('click', () => this.HANDLE_RENDER_CLICK());
+
+        if (projectionSelect) {
+            projectionSelect.value = this.projectionType;
+            projectionSelect.addEventListener('change', () => {
+                this.projectionType = projectionSelect.value as 'mercator' | 'globe';
+                this.HANDLE_RENDER_CLICK();
+            });
+        }
 
         fieldSelect.addEventListener('change', () => {
             if (fieldSelect.value === 'totalfield') this.isUncertaintyVisible = false;
@@ -171,34 +200,51 @@ const K_MAG_MAP_APP = {
         });
     },
 
+    // MODIFIED: This function now updates both the hidden panel status and the visible overlay
     UPD_STATUS: function(par_message: string, par_is_error = false): void {
-        const statusEl = document.getElementById('status');
+        const statusEl = document.getElementById('status'); // The one in the panel
+        const overlayEl = this.statusOverlay; // The new visible one
+
+        // Update the status text inside the control panel
         if (statusEl) {
             statusEl.textContent = par_message;
-            statusEl.style.color = par_is_error ? 'red' : '#555';
+            statusEl.style.color = par_is_error ? '#ff8a8a' : '#ccc';
+        }
+
+        // Update the main overlay on the screen
+        if (overlayEl) {
+            overlayEl.html(par_message) // Use .html() to allow line breaks if needed
+                     .style("color", par_is_error ? "#ff8a8a" : "#ffffff");
+
+            // On success, fade out and remove the overlay. On error, keep it visible.
+            const isSuccess = !par_is_error && (par_message.includes("Map rendered") || par_message.includes("Ready"));
+            if (isSuccess) {
+                 overlayEl.transition().duration(1500).style("opacity", 0).remove();
+                 this.statusOverlay = null; // Clear the reference
+            }
         }
     },
 
     INIT_GEOMAG: async function(): Promise<boolean> {
         if (typeof CL_GEOMAG === 'undefined') {
-            this.UPD_STATUS('Error: CL_GEOMAG class not found.', true);
+            this.UPD_STATUS('Error: The `CL_GEOMAG` library is missing.<br>Please ensure it is loaded correctly.', true);
             return false;
         }
         this.geomagInstance = new CL_GEOMAG();
         try {
             if (!this.cofFileContentCache) {
-                this.UPD_STATUS('Fetching .COF model file...');
+                this.UPD_STATUS('Fetching model data...');
                 const response = await fetch(this.config.cofURL);
-                if (!response.ok) throw new Error(`Failed to fetch COF file: ${response.statusText}`);
+                if (!response.ok) throw new Error(`Could not load ${this.config.cofURL}. Check file path and server. (Error: ${response.status})`);
                 this.cofFileContentCache = await response.text();
             }
-            this.UPD_STATUS('Loading COF model data...');
+            this.UPD_STATUS('Loading model data...');
             if (!this.LOAD_MODEL_INTO_INSTANCE(this.geomagInstance, this.cofFileContentCache)) {
-                this.UPD_STATUS('Error: Failed to load model data.', true);
+                this.UPD_STATUS('Error: Failed to parse model data.', true);
                 return false;
             }
             this.UPD_STATUS(`Model loaded. Valid range: ${this.geomagInstance.minyr.toFixed(1)} - ${this.geomagInstance.maxyr.toFixed(1)}. Ready.`);
-            await this.HANDLE_RENDER_CLICK();
+            await this.HANDLE_RENDER_CLICK(); // Automatically render the first map
             return true;
         } catch (error) {
             console.error('Initialization failed:', error);
@@ -207,6 +253,9 @@ const K_MAG_MAP_APP = {
         }
     },
 
+    // ... (The rest of your K_MAG_MAP_APP object remains the same)
+    // Just paste the code from this point downwards from your original file.
+    // No other changes are needed in the functions below this point.
     CLR_OVERLAYS: function(): void {
         const svg = d3.select("#geomag-map");
     // Remove contour overlays, uncertainty zones, legend, map title, dip-pole markers and clipped group
@@ -362,6 +411,7 @@ const K_MAG_MAP_APP = {
         // Do not clear overlays immediately: keep existing overlay visible
         // while we render a new temporary overlay, then swap to avoid flicker
 
+        this.UPD_STATUS('Fetching world map data...', false);
         const WORLD = await d3.json<Topology>(this.config.worldAtlasURL);
         if (!WORLD || !WORLD.objects) {
             this.UPD_STATUS("Error: Invalid world atlas data.", true);
@@ -376,10 +426,12 @@ const K_MAG_MAP_APP = {
 
     const suffix = `-new-${Date.now()}`;
     const { pathGenerator, clippedGroup } = this.DRAW_BASE_MAP(par_svg_id, LAND, SPHERE, FIELD_CONFIG.title, DIP_POLES, suffix);
+        this.UPD_STATUS('Calculating grid data...', false);
         const GRID_DATA = this.GENERATE_GRID_DATA(COMMON_ARGS, FIELD_CONFIG.paramKey);
 
         if (this.isSmoothingEnabled) this.APPLY_GAUSSIAN_BLUR(GRID_DATA.values, GRID_DATA.width, GRID_DATA.height, 1.5);
 
+        this.UPD_STATUS('Drawing contours...', false);
         const PASSES = [FIELD_CONFIG.positiveOptions, FIELD_CONFIG.negativeOptions, FIELD_CONFIG.zeroOptions];
         for (const options of PASSES) {
             if (options.domain[0] <= options.domain[1]) {
@@ -409,8 +461,25 @@ const K_MAG_MAP_APP = {
         const { mapWidth, mapHeight } = this.config;
         const svg = d3.select<SVGSVGElement, unknown>(`#${par_svg_id}`);
 
-        this.projection = d3.geoMercator().fitSize([mapWidth - 40, mapHeight - 40], par_sphere_feature);
-        const pathGenerator = d3.geoPath(this.projection);
+        // Choose projection based on UI or internal state
+        const projChoiceEl = document.getElementById('projectionSelect') as HTMLSelectElement | null;
+        const projChoice = projChoiceEl ? (projChoiceEl.value as 'mercator' | 'globe') : this.projectionType || 'mercator';
+        this.projectionType = projChoice;
+
+        let pathGenerator: any;
+        if (projChoice === 'globe') {
+            // Orthographic globe centered in SVG
+            const radius = Math.min(mapWidth, mapHeight) / 2 - 20;
+            this.projection = (d3 as any).geoOrthographic()
+                .scale(radius)
+                .translate([mapWidth / 2, mapHeight / 2])
+                .clipAngle(90)
+                .precision(0.5) as unknown as d3.GeoProjection;
+            pathGenerator = (d3 as any).geoPath(this.projection);
+        } else {
+            this.projection = (d3 as any).geoMercator().fitSize([mapWidth - 40, mapHeight - 40], par_sphere_feature) as unknown as d3.GeoProjection;
+            pathGenerator = (d3 as any).geoPath(this.projection);
+        }
 
         svg.on("click", null);
 
@@ -422,7 +491,12 @@ const K_MAG_MAP_APP = {
         const defs = svg.select("defs").empty() ? svg.append("defs") : svg.select("defs");
         defs.select(`#${clipPathId}`).remove();
         const clip = defs.append("clipPath").attr("id", clipPathId);
-        clip.append("rect").attr("x", 0).attr("y", 0).attr("width", mapWidth).attr("height", mapHeight);
+        if (projChoice === 'globe') {
+            // For globe, use a circular clip to show a circular planet
+            clip.append('circle').attr('cx', mapWidth/2).attr('cy', mapHeight/2).attr('r', Math.min(mapWidth, mapHeight)/2 - 8);
+        } else {
+            clip.append("rect").attr("x", 0).attr("y", 0).attr("width", mapWidth).attr("height", mapHeight);
+        }
 
         // Create a temp clipped group if suffix provided, otherwise replace main group
         const clippedGroupId = `${par_svg_id}-clipped-group${suffix ? suffix : ''}`;
@@ -431,14 +505,48 @@ const K_MAG_MAP_APP = {
             .attr("id", clippedGroupId)
             .attr("clip-path", `url(#${clipPathId})`);
 
-        this.DRAW_GRATICULES(clippedGroup, svg, this.projection, pathGenerator);
+        this.DRAW_GRATICULES(clippedGroup, svg, this.projection as d3.GeoProjection, pathGenerator);
 
         clippedGroup.append("path")
             .datum(par_land_features)
             .attr("d", pathGenerator)
-            .style("fill", "black")
-            .style("stroke", "#336633")
-            .style("stroke-width", 0.5);
+            // Use a light neutral fill so land is visible on the dark page background
+            .style("fill", "#e8e8e8")
+             .style("stroke", "#336633")
+             .style("stroke-width", 0.5);
+
+        // Add basic drag-to-rotate for globe projection
+        if (projChoice === 'globe') {
+            // remove previous drag handlers to avoid duplicates
+            (svg as any).on('.drag', null);
+            let lastRotation: [number, number, number] = ((this.projection as any).rotate && (this.projection as any).rotate()) || [0,0,0];
+            const sens = 0.25;
+            (svg as any).call((d3 as any).drag()
+                .on('start', () => {
+                    lastRotation = ((K_MAG_MAP_APP.projection as any).rotate && (K_MAG_MAP_APP.projection as any).rotate()) || [0,0,0];
+                })
+                .on('drag', (event: any) => {
+                    const dx = event.dx; const dy = event.dy;
+                    const newRotate = [lastRotation[0] + dx * sens, lastRotation[1] - dy * sens];
+                    (K_MAG_MAP_APP.projection as any).rotate(newRotate);
+                    const pg = (d3 as any).geoPath(K_MAG_MAP_APP.projection as any);
+                    // update visible paths
+                    clippedGroup.selectAll('path').attr('d', pg as any);
+                    // update dip-pole markers (use suffix-aware selector)
+                    svg.selectAll(`g.dip-pole${suffix ? suffix : ''}, text.dip-pole${suffix ? suffix : ''}`).each(function(this: any, d: any) {
+                        try {
+                            const node = d3.select(this as any);
+                            if (!d || typeof d.lon === 'undefined') return;
+                            const p = (K_MAG_MAP_APP.projection as any)([d.lon, d.lat]);
+                            if (!p || !isFinite(p[0]) || !isFinite(p[1])) {
+                                node.attr('transform', null).style('display', 'none');
+                            } else {
+                                node.style('display', null).attr('transform', `translate(${p[0]}, ${p[1]})`);
+                            }
+                        } catch (_) {}
+                    });
+                }));
+        }
 
         // Optional outer border; safe to skip if projection returns invalid sphere path
         try {
@@ -592,7 +700,7 @@ const K_MAG_MAP_APP = {
 
         if (this.clickInfoWindow) {
             this.clickInfoWindow.html(html)
-                .style("left", `${par_x + 20}px`).style("top", `${par_y + 20}px`).style("display", "block");
+                .style("display", "block");
 
             this.clickInfoWindow.select(".close-btn").on("click", () => this.CLR_CLICK_ELEMENTS());
         }
@@ -971,4 +1079,3 @@ const K_MAG_MAP_APP = {
 };
 
 K_MAG_MAP_APP.INIT();
-
