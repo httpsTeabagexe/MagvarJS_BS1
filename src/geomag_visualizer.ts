@@ -94,6 +94,9 @@ const K_MAG_MAP_APP = {
     currentClickPoint: null as { x: number; y: number; lon: number; lat: number } | null,
     currentIsolines: null as d3.Selection<SVGGElement, unknown, HTMLElement, any> | null,
     statusOverlay: null as d3.Selection<HTMLDivElement, unknown, HTMLElement, any> | null,
+    // Cache of last rendered grid and param for click-based isolines
+    lastGridData: null as GridData | null,
+    lastParamKey: null as ParamKey | null,
 
 
     // --- Main Initializer ---
@@ -439,6 +442,10 @@ const K_MAG_MAP_APP = {
             }
         }
 
+    // Cache for click isolines
+    this.lastGridData = GRID_DATA;
+    this.lastParamKey = FIELD_CONFIG.paramKey;
+
     if (this.isUncertaintyVisible && (par_field === 'declination' || par_field === 'inclination')) {
             this.UPD_STATUS('Calculating blackout zones...', false);
             const hGridData = this.GENERATE_GRID_DATA(COMMON_ARGS, 'h');
@@ -627,6 +634,54 @@ const K_MAG_MAP_APP = {
         return { pathGenerator, clippedGroup };
     },
 
+    // Build a MultiLineString GeoJSON for a single contour level using marching squares
+    BUILD_SINGLE_CONTOUR_GEOJSON: function(par_grid_data: GridData, level: number): any | null {
+        const toGeo = (p: {x: number, y: number}): [number, number] | null => {
+            const lon = (p.x / (par_grid_data.width - 1)) * 360 - 180;
+            const lat = 90 - (p.y / (par_grid_data.height - 1)) * 180;
+            return isNaN(lon) || isNaN(lat) ? null : [lon, lat];
+        };
+        const lines: [{x:number, y:number}, {x:number, y:number}][] = [];
+        for (let loc_y = 0; loc_y < par_grid_data.height - 1; loc_y++) {
+            for (let loc_x = 0; loc_x < par_grid_data.width - 1; loc_x++) {
+                const NW_VAL = par_grid_data.values[loc_y * par_grid_data.width + loc_x];
+                const NE_VAL = par_grid_data.values[loc_y * par_grid_data.width + loc_x + 1];
+                const SW_VAL = par_grid_data.values[(loc_y + 1) * par_grid_data.width + loc_x];
+                const SE_VAL = par_grid_data.values[(loc_y + 1) * par_grid_data.width + loc_x + 1];
+                const TYPE = BIN_TO_TYPE(NW_VAL > level, NE_VAL > level, SE_VAL > level, SW_VAL > level);
+                if (TYPE === 0 || TYPE === 15) continue;
+
+                let loc_a, loc_b, loc_c, loc_d;
+                if (this.isSmoothingEnabled) {
+                    loc_a = { x: loc_x + LERP(level, NW_VAL, NE_VAL), y: loc_y };
+                    loc_b = { x: loc_x + 1, y: loc_y + LERP(level, NE_VAL, SE_VAL) };
+                    loc_c = { x: loc_x + LERP(level, SW_VAL, SE_VAL), y: loc_y + 1 };
+                    loc_d = { x: loc_x, y: loc_y + LERP(level, NW_VAL, SW_VAL) };
+                } else {
+                    loc_a = { x: loc_x + 0.5, y: loc_y }; loc_b = { x: loc_x + 1, y: loc_y + 0.5 };
+                    loc_c = { x: loc_x + 0.5, y: loc_y + 1 }; loc_d = { x: loc_x, y: loc_y + 0.5 };
+                }
+                switch (TYPE) {
+                    case 1: case 14: lines.push([loc_d, loc_c]); break;
+                    case 2: case 13: lines.push([loc_c, loc_b]); break;
+                    case 3: case 12: lines.push([loc_d, loc_b]); break;
+                    case 4: case 11: lines.push([loc_a, loc_b]); break;
+                    case 5: lines.push([loc_d, loc_a]); lines.push([loc_c, loc_b]); break;
+                    case 6: case 9:  lines.push([loc_a, loc_c]); break;
+                    case 7: case 8:  lines.push([loc_d, loc_a]); break;
+                    case 10: lines.push([loc_a, loc_d]); lines.push([loc_b, loc_c]); break;
+                }
+            }
+        }
+        if (lines.length === 0) return null;
+        const coords = lines.map(line => {
+            const start = toGeo(line[0]); const end = toGeo(line[1]);
+            return (!start || !end || Math.abs(start[0] - end[0]) > 180) ? null : [start, end];
+        }).filter((d): d is [number, number][] => !!d);
+        if (coords.length === 0) return null;
+        return { type: "MultiLineString", coordinates: coords } as any;
+    },
+
     HANDLE_MAP_CLICK: function(par_x: number, par_y: number): void {
         if (!this.projection) return;
         this.CLR_CLICK_ELEMENTS();
@@ -711,28 +766,45 @@ const K_MAG_MAP_APP = {
 
     DRAW_ISOLINES_FROM_POINT: function(par_coords: [number, number], fieldData: GEOMAG_FIELD_COMPONENTS): void {
         if (!this.projection || !this.currentClickPoint) return;
+        if (!this.lastGridData) return; // need grid to build contour
 
-        const svg = d3.select<SVGSVGElement, unknown>("#geomag-map");
+        // Use main clipped group so isoline is properly clipped to the map
+        const container = d3.select<SVGGElement, unknown>("#geomag-map-clipped-group");
         if (this.currentIsolines) this.currentIsolines.remove();
 
-        const [lon, lat] = par_coords;
         const fieldSelect = document.getElementById('fieldSelect') as HTMLSelectElement;
         const field = fieldSelect.value as FieldType;
         const key = (field === 'declination' ? 'd_deg' : field === 'inclination' ? 'i_deg' : 'f') as keyof GEOMAG_FIELD_COMPONENTS;
         const currentValue = fieldData[key];
 
-        this.currentIsolines = svg.append("g").attr("class", "isolines-group");
+        // Build contour geometry for the clicked value
+        const isoGeo = this.BUILD_SINGLE_CONTOUR_GEOJSON(this.lastGridData, currentValue);
+        this.currentIsolines = container.append("g").attr("class", "isolines-group");
+
+        // Marker at click point
         this.currentIsolines.append("circle")
             .attr("cx", this.currentClickPoint.x).attr("cy", this.currentClickPoint.y)
-            .attr("r", 5).attr("fill", "red").attr("stroke", "white").attr("stroke-width", 1);
+            .attr("r", 4).attr("fill", "#ff3333").attr("stroke", "white").attr("stroke-width", 1);
 
-        const pathGenerator = d3.geoPath().projection(this.projection);
-        const circle = d3.geoCircle().center([lon, lat]).radius(2);
-        this.currentIsolines.append("path").datum(circle()).attr("d", pathGenerator).attr("class", "isolines");
+        // Draw isoline if available
+        if (isoGeo) {
+            const pathGenerator = d3.geoPath().projection(this.projection as any);
+            this.currentIsolines.append("path")
+                .datum(isoGeo)
+                .attr("d", pathGenerator as any)
+                .attr("class", "isolines")
+                .style("fill", "none")
+                .style("stroke", field === 'totalfield' ? "#8B0000" : (currentValue === 0 ? "green" : currentValue > 0 ? "#C00000" : "#0000A0"))
+                .style("stroke-width", 2)
+                .style("stroke-dasharray", "4,3");
+        }
 
+        // Label near click point
         this.currentIsolines.append("text")
             .attr("x", this.currentClickPoint.x + 10).attr("y", this.currentClickPoint.y - 10)
-            .attr("class", "isolines-label").text(`${currentValue.toFixed(field === 'totalfield' ? 0 : 1)}`);
+            .attr("class", "isolines-label")
+            .style("font-size", "11px").style("font-family", "Arial, sans-serif").style("fill", "#111")
+            .text(`${currentValue.toFixed(field === 'totalfield' ? 0 : 1)}`);
     },
 
     DRAW_CONTOUR_LAYER: function(par_container: d3.Selection<SVGGElement, unknown, HTMLElement, any>, par_path_generator: d3.GeoPath, par_grid_data: GridData, par_options: ContourOptions): void {
@@ -891,7 +963,6 @@ const K_MAG_MAP_APP = {
     },
 
     ADD_LEGEND: function (par_svg_id: string, par_legend_items: LegendItem[], suffix?: string): void {
-        const { mapHeight, mapWidth } = this.config;
         const svg = d3.select<SVGSVGElement, unknown>(`#${par_svg_id}`);
         svg.selectAll(`g.legend${suffix ? suffix : ''}`).remove();
         const legendGroup = svg.append("g").attr("class", `legend${suffix ? suffix : ''}`)
@@ -1072,7 +1143,7 @@ const K_MAG_MAP_APP = {
         }
 
         // Latitude labels (sides) – skip the poles (±90°) to avoid Infinity in Mercator
-        for (let loc_lat = -60; loc_lat <= 60; loc_lat += 30) { // now: -60, -30, 0, 30, 60
+        for (let loc_lat = -60; loc_lat <= 60; loc_lat += 30) {
             if (loc_lat === 0) continue; // we label equator separately
             const point = par_projection([0, loc_lat]);
             if (point && isFinite(point[1])) {
