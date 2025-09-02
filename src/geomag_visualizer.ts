@@ -4,9 +4,9 @@ type Topology = any; // eslint-disable-line @typescript-eslint/no-explicit-any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type FeatureCollection = any; // eslint-disable-line @typescript-eslint/no-explicit-any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Geometry = any; // eslint-disable-line @typescript-eslint/no-explicit-any
+// type Geometry = any; // eslint-disable-line @typescript-eslint/no-explicit-any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type GeoJsonProperties = any; // eslint-disable-line @typescript-eslint/no-explicit-any
+// type GeoJsonProperties = any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 // --- Type Definitions ---
 type FieldType = 'declination' | 'inclination' | 'totalfield';
@@ -560,19 +560,22 @@ const K_MAG_MAP_APP = {
 
     // Map title - add semi-transparent background for contrast and avoid stacking using suffix
     const titleGroup = svg.append("g").attr("class", `map-title${suffix ? suffix : ''}`)
-        .attr("transform", `translate(${mapWidth/2}, 0)`)
+        .attr("transform", `translate(16, 16)`) // Move to top-left
         .style("pointer-events", "none");
-    // background rectangle behind title for readability
-    titleGroup.append("rect")
-        .attr("x", -350).attr("y", 8)
-        .attr("width", 700).attr("height", 28)
-        .attr("rx", 6).attr("ry", 6)
-        .style("fill", "rgba(255,255,255,0.85)")
-        .style("stroke", "#ccc").style("stroke-width", 0.5);
-    titleGroup.append("text")
-        .attr("x", 0).attr("y", 28).attr("text-anchor", "middle")
-        .style("font-size", "18px").style("font-family", "Arial, sans-serif").style("fill", "#222")
+    // Create title text first to measure size, then insert background
+    const titleText = titleGroup.append("text")
+        .attr("x", 12).attr("y", 20)
+        .style("font-size", "16px").style("font-family", "Arial, sans-serif").style("fill", "#222")
         .text(title);
+    try {
+        const tb = (titleText.node() as any).getBBox();
+        titleGroup.insert("rect", "text")
+            .attr("x", 0).attr("y", tb.y - 6)
+            .attr("width", tb.width + 24).attr("height", tb.height + 12)
+            .attr("rx", 6).attr("ry", 6)
+            .style("fill", "rgba(255,255,255,0.85)")
+            .style("stroke", "#ccc").style("stroke-width", 0.5);
+    } catch (_) { /* ignore if getBBox fails */ }
 
         if (dipPoles) {
             // Render dip-poles as groups: marker + label offset for readability
@@ -892,16 +895,31 @@ const K_MAG_MAP_APP = {
         const svg = d3.select<SVGSVGElement, unknown>(`#${par_svg_id}`);
         svg.selectAll(`g.legend${suffix ? suffix : ''}`).remove();
         const legendGroup = svg.append("g").attr("class", `legend${suffix ? suffix : ''}`)
-            .attr("transform", `translate(${mapWidth/2}, ${mapHeight - 30})`);
-        const itemWidth = 150; const totalWidth = par_legend_items.length * itemWidth;
-        const startX = -totalWidth / 2;
-    par_legend_items.forEach((item, i) => {
-            const legendItem = legendGroup.append("g").attr("transform", `translate(${startX + i * itemWidth}, 0)`);
+            .attr("transform", `translate(${16}, ${56})`) // Left side, below title
+            .style("pointer-events", "none");
+
+        const itemHeight = 22;
+        const itemsRoot = legendGroup.append("g").attr("class", "legend-items");
+        par_legend_items.forEach((item, i) => {
+            const y = i * itemHeight;
+            const legendItem = itemsRoot.append("g").attr("transform", `translate(0, ${y})`);
             legendItem.append("rect").attr("x", 0).attr("y", 0).attr("width", 18).attr("height", 18)
                 .style("fill", item.color).style("stroke", "black").style("stroke-width", 0.5);
             legendItem.append("text").attr("x", 24).attr("y", 9).attr("dy", "0.35em")
-                .style("font-size", "11px").style("font-family", "Arial, sans-serif").text(item.text);
+                .style("font-size", "11px").style("font-family", "Arial, sans-serif").style("fill", "#111")
+                .text(item.text);
         });
+        // Insert background panel sized to contents
+        try {
+            const bbox = (itemsRoot.node() as any).getBBox();
+            legendGroup.insert("rect", ":first-child")
+                .attr("x", -8).attr("y", bbox.y - 8)
+                .attr("width", Math.max(140, bbox.width + 16))
+                .attr("height", bbox.height + 16)
+                .attr("rx", 6).attr("ry", 6)
+                .style("fill", "rgba(255,255,255,0.85)")
+                .style("stroke", "#ccc").style("stroke-width", 0.5);
+        } catch (_) { /* ignore if getBBox fails */ }
     },
 
     LOAD_MODEL_INTO_INSTANCE: function (par_geomag_instance: CL_GEOMAG, par_cof_file_content: string): boolean {
@@ -953,10 +971,9 @@ const K_MAG_MAP_APP = {
                 pointGeomag.modelData = geomagInstance.modelData;
                 Object.assign(pointGeomag, {
                     model: geomagInstance.model.slice(), nmodel: geomagInstance.nmodel,
-                    epoch: geomagInstance.epoch.slice(), yrmin: geomagInstance.yrmin.slice(),
-                    yrmax: geomagInstance.yrmax.slice(), altmin: geomagInstance.altmin.slice(),
-                    altmax: geomagInstance.altmax.slice(), max1: geomagInstance.max1.slice(),
-                    max2: geomagInstance.max2.slice(), max3: geomagInstance.max3.slice(),
+                    epoch: geomagInstance.epoch.slice(), yrmin: geomagInstance.yrmin.slice(), yrmax: geomagInstance.yrmax.slice(),
+                    altmin: geomagInstance.altmin.slice(), altmax: geomagInstance.altmax.slice(),
+                    max1: geomagInstance.max1.slice(), max2: geomagInstance.max2.slice(), max3: geomagInstance.max3.slice(),
                     irec_pos: geomagInstance.irec_pos.slice()
                 });
                 const field = pointGeomag.getFieldComponents(epoch, igdgc, altitudeKm, loc_lat, lon);
