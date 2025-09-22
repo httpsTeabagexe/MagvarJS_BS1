@@ -94,6 +94,8 @@ const K_MAG_MAP_APP = {
     currentClickPoint: null as { x: number; y: number; lon: number; lat: number } | null,
     currentIsolines: null as d3.Selection<SVGGElement, unknown, HTMLElement, any> | null,
     statusOverlay: null as d3.Selection<HTMLDivElement, unknown, HTMLElement, any> | null,
+    // Current zoom/pan transform for planar maps
+    currentZoomTransform: null as any,
     // Cache of last rendered grid and param for click-based isolines
     lastGridData: null as GridData | null,
     lastParamKey: null as ParamKey | null,
@@ -261,12 +263,12 @@ const K_MAG_MAP_APP = {
     // No other changes are needed in the functions below this point.
     CLR_OVERLAYS: function(): void {
         const svg = d3.select("#geomag-map");
-    // Remove contour overlays, uncertainty zones, legend, map title, dip-pole markers and clipped group
-    svg.selectAll(".contours-manual, .caution-zone, .unreliable-zone, .legend, text.map-title, text.dip-pole, #geomag-map-clipped-group").remove();
-    // Also remove any temporary groups/titles/dip-poles created with suffixes
-    svg.selectAll("[id^=geomag-map-clipped-group-], [class^=map-title-], [class^=dip-pole]").remove();
-    // Remove clipPaths inside defs that may reference previous clipped groups
-    svg.selectAll("defs clipPath").remove();
+        // Remove contour overlays, uncertainty zones, legend, map title, dip-pole markers, graticule labels, sphere border, and clipped group
+        svg.selectAll(".contours-manual, .caution-zone, .unreliable-zone, .legend, text.map-title, g.map-title, text.dip-pole, g.dip-pole, .graticule-labels, .sphere-border, #geomag-map-clipped-group").remove();
+        // Also remove any temporary groups/titles/dip-poles created with suffixes
+        svg.selectAll("[id^=geomag-map-clipped-group-], [class^=map-title-], [class^=dip-pole], [class^=legend-]").remove();
+        // Remove clipPaths inside defs that may reference previous clipped groups
+        svg.selectAll("defs clipPath").remove();
         this.CLR_CLICK_ELEMENTS();
     },
 
@@ -522,42 +524,143 @@ const K_MAG_MAP_APP = {
              .style("stroke", "#336633")
              .style("stroke-width", 0.5);
 
-        // Add basic drag-to-rotate for globe projection
+        // Interaction: zoom/pan for Mercator; drag+wheel-zoom for Globe
         if (projChoice === 'globe') {
-            // remove previous drag handlers to avoid duplicates
+            // remove previous drag/zoom handlers to avoid duplicates
             (svg as any).on('.drag', null);
-            let lastRotation: [number, number, number] = ((this.projection as any).rotate && (this.projection as any).rotate()) || [0,0,0];
-            const sens = 0.25;
+            (svg as any).on('.zoom', null);
+
+            const ortho = this.projection as any;
+            const baseScale = +ortho.scale();
+            const minScale = baseScale * 0.4;
+            const maxScale = baseScale * 4;
+            const cx = mapWidth / 2, cy = mapHeight / 2;
+            const rClip = Math.min(mapWidth, mapHeight) / 2 - 8;
+
+            // Cursor hint
+            svg.style('cursor', 'grab');
+
+            // requestAnimationFrame-batched render to keep drag smooth
+            let rafScheduled = false;
+            const render = () => {
+                rafScheduled = false;
+                const pg = (d3 as any).geoPath(ortho);
+                // update visible paths
+                clippedGroup.selectAll('path').attr('d', pg as any);
+                // update dip-pole markers (use suffix-aware selector)
+                svg.selectAll(`g.dip-pole${suffix ? suffix : ''}, text.dip-pole${suffix ? suffix : ''}`).each(function(this: any, d: any) {
+                    try {
+                        const node = d3.select(this as any);
+                        if (!d || typeof d.lon === 'undefined') return;
+                        const p = (K_MAG_MAP_APP.projection as any)([d.lon, d.lat]);
+                        if (!p || !isFinite(p[0]) || !isFinite(p[1])) {
+                            node.attr('transform', null).style('display', 'none');
+                        } else {
+                            node.style('display', null).attr('transform', `translate(${p[0]}, ${p[1]})`);
+                        }
+                    } catch (_) {}
+                });
+            };
+            const requestRender = () => {
+                if (!rafScheduled) {
+                    rafScheduled = true;
+                    requestAnimationFrame(render);
+                }
+            };
+
+            // Drag to rotate the globe (with clamped tilt and scale-aware sensitivity + EMA smoothing)
+            let lastRotation: [number, number, number] = (ortho.rotate && ortho.rotate()) || [0, 0, 0];
+            let accX = 0, accY = 0; // accumulate raw deltas over the drag
+            let smoothX = 0, smoothY = 0; // smoothed accumulators
+            const alpha = 0.35; // smoothing factor (0..1)
+
             (svg as any).call((d3 as any).drag()
-                .on('start', () => {
-                    lastRotation = ((K_MAG_MAP_APP.projection as any).rotate && (K_MAG_MAP_APP.projection as any).rotate()) || [0,0,0];
+                .on('start', (event: any) => {
+                    // Ignore drags that start outside the globe circle
+                    const [mx, my] = d3.pointer(event);
+                    const dx0 = mx - cx, dy0 = my - cy;
+                    if (Math.hypot(dx0, dy0) > rClip) {
+                        (event as any).on('drag', null);
+                        return;
+                    }
+                    lastRotation = (ortho.rotate && ortho.rotate()) || [0, 0, 0];
+                    accX = accY = smoothX = smoothY = 0;
+                    svg.style('cursor', 'grabbing');
                 })
                 .on('drag', (event: any) => {
-                    const dx = event.dx; const dy = event.dy;
-                    const newRotate = [lastRotation[0] + dx * sens, lastRotation[1] - dy * sens];
-                    (K_MAG_MAP_APP.projection as any).rotate(newRotate);
-                    const pg = (d3 as any).geoPath(K_MAG_MAP_APP.projection as any);
-                    // update visible paths
-                    clippedGroup.selectAll('path').attr('d', pg as any);
-                    // update dip-pole markers (use suffix-aware selector)
-                    svg.selectAll(`g.dip-pole${suffix ? suffix : ''}, text.dip-pole${suffix ? suffix : ''}`).each(function(this: any, d: any) {
-                        try {
-                            const node = d3.select(this as any);
-                            if (!d || typeof d.lon === 'undefined') return;
-                            const p = (K_MAG_MAP_APP.projection as any)([d.lon, d.lat]);
-                            if (!p || !isFinite(p[0]) || !isFinite(p[1])) {
-                                node.attr('transform', null).style('display', 'none');
-                            } else {
-                                node.style('display', null).attr('transform', `translate(${p[0]}, ${p[1]})`);
-                            }
-                        } catch (_) {}
-                    });
+                    const [mx, my] = d3.pointer(event);
+                    const dx0 = mx - cx, dy0 = my - cy;
+                    if (Math.hypot(dx0, dy0) > rClip * 1.02) return; // small tolerance
+
+                    // Sensitivity adapts to zoom to feel consistent
+                    const sNorm = (+ortho.scale()) / baseScale;
+                    const sens = 0.25 / Math.sqrt(sNorm);
+
+                    // accumulate deltas and smooth them (EMA)
+                    accX += event.dx; accY += event.dy;
+                    smoothX += alpha * (accX - smoothX);
+                    smoothY += alpha * (accY - smoothY);
+
+                    let lambda = lastRotation[0] + smoothX * sens;     // yaw (east-west)
+                    let phi = lastRotation[1] - smoothY * sens;        // pitch (north-south)
+                    // Clamp pitch to avoid flipping over the poles
+                    if (phi > 85) phi = 85; if (phi < -85) phi = -85;
+                    ortho.rotate([lambda, phi, 0]);
+
+                    requestRender();
+                })
+                .on('end', () => {
+                    svg.style('cursor', 'grab');
+                    lastRotation = (ortho.rotate && ortho.rotate()) || [0, 0, 0];
                 }));
+
+            // Smooth wheel zoom by adjusting orthographic scale (RAF-batched)
+            svg.on('wheel.zoom', (event: WheelEvent) => {
+                event.preventDefault();
+                const s0 = +ortho.scale();
+                const k = Math.pow(1.002, -event.deltaY); // smooth factor
+                const s = Math.max(minScale, Math.min(maxScale, s0 * k));
+                if (s === s0) return;
+                ortho.scale(s);
+                requestRender();
+            }, { passive: false } as any);
+
+            // Double-click resets rotation (RAF-batched render)
+            svg.on('dblclick.reset', () => {
+                ortho.rotate([0, 0, 0]);
+                lastRotation = [0, 0, 0];
+                requestRender();
+            });
+        } else {
+            // d3-zoom for smooth pan/zoom on planar map
+            // Clear any previous globe-specific handlers and cursor
+            (svg as any).on('.drag', null);
+            (svg as any).on('dblclick.reset', null);
+            (svg as any).on('.zoom', null); // clear any zoom namespace before re-applying
+            svg.style('cursor', 'default');
+
+            const zoomed = (event: any) => {
+                this.currentZoomTransform = event.transform;
+                clippedGroup.attr('transform', event.transform);
+            };
+            const zoomBehavior = (d3 as any).zoom()
+                .scaleExtent([1, 12])
+                .wheelDelta((event: WheelEvent) => {
+                    // slower, smoother zoom
+                    return -event.deltaY * 0.002;
+                })
+                .on('zoom', zoomed);
+            // Apply zoom behavior
+            (svg as any).call(zoomBehavior as any);
+            // Start with identity transform
+            this.currentZoomTransform = (d3 as any).zoomIdentity;
+            clippedGroup.attr('transform', this.currentZoomTransform);
         }
 
         // Optional outer border; safe to skip if projection returns invalid sphere path
         try {
             svg.append("path")
+                .attr("class", "sphere-border")
                 .datum(par_sphere_feature)
                 .attr("d", pathGenerator)
                 .style("fill", "none")
@@ -687,11 +790,19 @@ const K_MAG_MAP_APP = {
         this.CLR_CLICK_ELEMENTS();
         if (!this.IS_POINT_IN_MAP(par_x, par_y)) return;
         try {
-            const proj = this.projection;
+            const proj = this.projection as any;
             if (!proj || typeof proj.invert !== 'function') return;
-            const coords = proj.invert([par_x, par_y]);
+            // Account for current zoom/pan in planar (Mercator) mode
+            let localX = par_x;
+            let localY = par_y;
+            if (this.projectionType !== 'globe' && this.currentZoomTransform) {
+                const t: any = this.currentZoomTransform;
+                localX = (par_x - t.x) / t.k;
+                localY = (par_y - t.y) / t.k;
+            }
+            const coords = proj.invert([localX, localY]);
             if (!coords || coords.some(isNaN)) return;
-            this.currentClickPoint = { x: par_x, y: par_y, lon: coords[0], lat: coords[1] };
+            this.currentClickPoint = { x: localX, y: localY, lon: coords[0], lat: coords[1] };
             const fieldData = this.GET_POINT_FIELD(coords);
             if (!fieldData) return;
             this.SHOW_COORD_INFO(par_x, par_y, coords, fieldData);
