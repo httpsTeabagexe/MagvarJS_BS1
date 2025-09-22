@@ -537,6 +537,9 @@ const K_MAG_MAP_APP = {
             const cx = mapWidth / 2, cy = mapHeight / 2;
             const rClip = Math.min(mapWidth, mapHeight) / 2 - 8;
 
+            // Hide graticule labels in globe mode to avoid drift during rotation
+            svg.selectAll('g.graticule-labels').style('display', 'none');
+
             // Cursor hint
             svg.style('cursor', 'grab');
 
@@ -560,6 +563,22 @@ const K_MAG_MAP_APP = {
                         }
                     } catch (_) {}
                 });
+
+                // update selected-point marker (if any) to follow rotation
+                try {
+                    const cp = K_MAG_MAP_APP.currentClickPoint;
+                    if (cp) {
+                        const p = (K_MAG_MAP_APP.projection as any)([cp.lon, cp.lat]);
+                        const g = svg.select('g.isolines-group');
+                        if (!p || !isFinite(p[0]) || !isFinite(p[1]) || g.empty()) {
+                            g.style('display', 'none');
+                        } else {
+                            g.style('display', null);
+                            g.select('circle.click-marker').attr('cx', p[0]).attr('cy', p[1]);
+                            g.select('text.isolines-label').attr('x', p[0] + 10).attr('y', p[1] - 10);
+                        }
+                    }
+                } catch (_) {}
             };
             const requestRender = () => {
                 if (!rafScheduled) {
@@ -639,9 +658,44 @@ const K_MAG_MAP_APP = {
             (svg as any).on('.zoom', null); // clear any zoom namespace before re-applying
             svg.style('cursor', 'default');
 
+            // Ensure graticule labels are visible in Mercator
+            svg.selectAll('g.graticule-labels').style('display', null);
+
             const zoomed = (event: any) => {
                 this.currentZoomTransform = event.transform;
+                // Apply transform to the main clipped group
                 clippedGroup.attr('transform', event.transform);
+
+                // Reposition dip-pole markers to match zoom/pan without scaling text
+                const t = event.transform; // {k, x, y}
+                const apply = (pt: [number, number]) => [pt[0] * t.k + t.x, pt[1] * t.k + t.y];
+                const proj = this.projection as any;
+                svg.selectAll<SVGGElement, DipPole>('g.dip-pole').each(function(d: DipPole) {
+                    if (!d || typeof d.lon === 'undefined') return;
+                    const p = proj([d.lon, d.lat]);
+                    const node = d3.select(this as SVGGElement as any);
+                    if (!p || !isFinite(p[0]) || !isFinite(p[1])) {
+                        node.attr('transform', null).style('display', 'none');
+                    } else {
+                        const sp = apply(p as [number, number]);
+                        node.style('display', null).attr('transform', `translate(${sp[0]}, ${sp[1]})`);
+                    }
+                });
+
+                // Reposition graticule labels to match zoom/pan (keep label size constant)
+                svg.selectAll<SVGTextElement, unknown>('g.graticule-labels text').each(function() {
+                    const node = d3.select(this as SVGTextElement as any);
+                    const lon = +node.attr('data-lon');
+                    const lat = +node.attr('data-lat');
+                    if (!isFinite(lon) || !isFinite(lat)) return;
+                    const p = proj([lon, lat]);
+                    if (!p || !isFinite(p[0]) || !isFinite(p[1])) {
+                        node.style('display', 'none');
+                    } else {
+                        const sp = apply(p as [number, number]);
+                        node.style('display', null).attr('x', sp[0]).attr('y', sp[1]);
+                    }
+                });
             };
             const zoomBehavior = (d3 as any).zoom()
                 .scaleExtent([1, 12])
@@ -892,8 +946,9 @@ const K_MAG_MAP_APP = {
         const isoGeo = this.BUILD_SINGLE_CONTOUR_GEOJSON(this.lastGridData, currentValue);
         this.currentIsolines = container.append("g").attr("class", "isolines-group");
 
-        // Marker at click point
+        // Marker at click point (tagged for later updates)
         this.currentIsolines.append("circle")
+            .attr("class", "click-marker")
             .attr("cx", this.currentClickPoint.x).attr("cy", this.currentClickPoint.y)
             .attr("r", 4).attr("fill", "#ff3333").attr("stroke", "white").attr("stroke-width", 1);
 
@@ -1248,8 +1303,10 @@ const K_MAG_MAP_APP = {
             const point = par_projection([loc_lon, 0]);
             if (point && isFinite(point[0])) {
                 const label = loc_lon === 0 ? "0°" : loc_lon > 0 ? `${loc_lon}°E` : `${Math.abs(loc_lon)}°W`;
-                graticuleGroup.append("text").attr("x", point[0]).attr("y", topY).text(label).attr("text-anchor", "middle");
-                graticuleGroup.append("text").attr("x", point[0]).attr("y", bottomY).text(label).attr("text-anchor", "middle");
+                graticuleGroup.append("text").attr("x", point[0]).attr("y", topY).text(label).attr("text-anchor", "middle")
+                    .attr('data-lon', String(loc_lon)).attr('data-lat', '0');
+                graticuleGroup.append("text").attr("x", point[0]).attr("y", bottomY).text(label).attr("text-anchor", "middle")
+                    .attr('data-lon', String(loc_lon)).attr('data-lat', '0');
             }
         }
 
@@ -1262,15 +1319,18 @@ const K_MAG_MAP_APP = {
                 // place left labels just outside left edge, right labels outside right edge
                 const leftX = Math.max(6, loc_left - 8);
                 const rightX = Math.min(this.config.mapWidth - 6, loc_right + 8);
-                graticuleGroup.append("text").attr("x", leftX).attr("y", point[1]).text(label).attr("text-anchor", "start");
-                graticuleGroup.append("text").attr("x", rightX).attr("y", point[1]).text(label).attr("text-anchor", "end");
+                graticuleGroup.append("text").attr("x", leftX).attr("y", point[1]).text(label).attr("text-anchor", "start")
+                    .attr('data-lon', '0').attr('data-lat', String(loc_lat));
+                graticuleGroup.append("text").attr("x", rightX).attr("y", point[1]).text(label).attr("text-anchor", "end")
+                    .attr('data-lon', '0').attr('data-lat', String(loc_lat));
             }
         }
 
         // Equator label (right side) if projection returns finite point
         const equatorPoint = par_projection([0, 0]);
         if (equatorPoint && isFinite(equatorPoint[1])) {
-            graticuleGroup.append("text").attr("x", loc_right - 15).attr("y", equatorPoint[1]).text("0°").attr("text-anchor", "end");
+            graticuleGroup.append("text").attr("x", loc_right - 15).attr("y", equatorPoint[1]).text("0°").attr("text-anchor", "end")
+                .attr('data-lon', '0').attr('data-lat', '0');
         }
 
         graticuleGroup.selectAll("text").attr("dy", ".35em");
