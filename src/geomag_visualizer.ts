@@ -575,15 +575,155 @@ const K_MAG_MAP_APP = {
 
         this.DRAW_GRATICULES(clippedGroup, svg, this.projection as d3.GeoProjection, pathGenerator);
 
+        // Draw land as a single path from the FeatureCollection
         clippedGroup.append("path")
             .datum(par_land_features)
-            .attr("d", pathGenerator)
+            .attr("d", pathGenerator as any)
             .style("fill", "#e8e8e8")
             .style("stroke", "#336633")
             .style("stroke-width", 0.5);
 
         if (projChoice === 'globe') {
-            // ... existing globe interaction logic ...
+            // remove previous drag/zoom handlers to avoid duplicates
+            (svg as any).on('.drag', null);
+            (svg as any).on('.zoom', null);
+
+            const ortho = this.projection as any;
+            const baseScale = +ortho.scale();
+            const minScale = baseScale * 0.4;
+            const maxScale = baseScale * 4;
+            const cx = mapWidth / 2, cy = mapHeight / 2;
+            const rClip = Math.min(mapWidth, mapHeight) / 2 - 8;
+
+            // Hide graticule labels in globe mode to avoid drift during rotation
+            svg.selectAll('g.graticule-labels').style('display', 'none');
+
+            // Cursor hint
+            svg.style('cursor', 'grab');
+
+            // Helper to map screen pointer to SVG internal coordinates (viewBox space)
+            const toLocal = (evt: any) => {
+                const node = svg.node() as SVGSVGElement;
+                const rect = node.getBoundingClientRect();
+                const [sx, sy] = (d3 as any).pointer(evt, node);
+                const scaleX = mapWidth / rect.width;
+                const scaleY = mapHeight / rect.height;
+                return { x: sx * scaleX, y: sy * scaleY, scaleX, scaleY };
+            };
+
+            // requestAnimationFrame-batched render to keep drag smooth
+            let rafScheduled = false;
+            const render = () => {
+                rafScheduled = false;
+                const pg = (d3 as any).geoPath(ortho);
+                // update visible paths inside clipped group (land, graticules, contours)
+                clippedGroup.selectAll('path').attr('d', pg as any);
+                // update sphere border outside the clipped group
+                svg.selectAll('path.sphere-border').attr('d', pg as any);
+
+                // update dip-pole markers (support suffix-temporary classes during swap)
+                svg.selectAll(`g.dip-pole${suffix ? suffix : ''}, text.dip-pole${suffix ? suffix : ''}`).each(function(this: any, d: any) {
+                    try {
+                        const node = d3.select(this as any);
+                        if (!d || typeof d.lon === 'undefined') return;
+                        const p = (K_MAG_MAP_APP.projection as any)([d.lon, d.lat]);
+                        if (!p || !isFinite(p[0]) || !isFinite(p[1])) {
+                            node.attr('transform', null).style('display', 'none');
+                        } else {
+                            node.style('display', null).attr('transform', `translate(${p[0]}, ${p[1]})`);
+                        }
+                    } catch (_) {}
+                });
+
+                // update selected-point marker (if any) to follow rotation
+                try {
+                    const cp = K_MAG_MAP_APP.currentClickPoint;
+                    if (cp) {
+                        const p = (K_MAG_MAP_APP.projection as any)([cp.lon, cp.lat]);
+                        const g = svg.select('g.isolines-group');
+                        if (!p || !isFinite(p[0]) || !isFinite(p[1]) || g.empty()) {
+                            g.style('display', 'none');
+                        } else {
+                            g.style('display', null);
+                            g.select('circle.click-marker').attr('cx', p[0]).attr('cy', p[1]);
+                            g.select('text.isolines-label').attr('x', p[0] + 10).attr('y', p[1] - 10);
+                        }
+                    }
+                } catch (_) {}
+            };
+            const requestRender = () => {
+                if (!rafScheduled) {
+                    rafScheduled = true;
+                    requestAnimationFrame(render);
+                }
+            };
+
+            // Drag to rotate the globe (with clamped tilt and scale-aware sensitivity + EMA smoothing)
+            let lastRotation: [number, number, number] = (ortho.rotate && ortho.rotate()) || [0, 0, 0];
+            let accX = 0, accY = 0; // accumulate raw deltas over the drag (in internal units)
+            let smoothX = 0, smoothY = 0; // smoothed accumulators
+            const alpha = 0.35; // smoothing factor (0..1)
+
+            (svg as any).call((d3 as any).drag()
+                .on('start', (event: any) => {
+                    const { x, y } = toLocal(event);
+                    const dx0 = x - cx, dy0 = y - cy;
+                    if (Math.hypot(dx0, dy0) > rClip) {
+                        (event as any).on('drag', null);
+                        return;
+                    }
+                    lastRotation = (ortho.rotate && ortho.rotate()) || [0, 0, 0];
+                    accX = accY = smoothX = smoothY = 0;
+                    svg.style('cursor', 'grabbing');
+                })
+                .on('drag', (event: any) => {
+                    const node = svg.node() as SVGSVGElement;
+                    const rect = node.getBoundingClientRect();
+                    const scaleX = mapWidth / rect.width;
+                    const scaleY = mapHeight / rect.height;
+                    const { x, y } = toLocal(event);
+                    const dx0 = x - cx, dy0 = y - cy;
+                    if (Math.hypot(dx0, dy0) > rClip * 1.02) return; // small tolerance
+
+                    // Sensitivity adapts to zoom to feel consistent
+                    const sNorm = (+ortho.scale()) / baseScale;
+                    const sens = 0.25 / Math.sqrt(sNorm);
+
+                    // accumulate deltas and smooth them (EMA), scale deltas to internal units
+                    accX += event.dx * scaleX; accY += event.dy * scaleY;
+                    smoothX += alpha * (accX - smoothX);
+                    smoothY += alpha * (accY - smoothY);
+
+                    let lambda = lastRotation[0] + smoothX * sens;     // yaw (east-west)
+                    let phi = lastRotation[1] - smoothY * sens;        // pitch (north-south)
+                    // Clamp pitch to avoid flipping over the poles
+                    if (phi > 85) phi = 85; if (phi < -85) phi = -85;
+                    ortho.rotate([lambda, phi, 0]);
+
+                    requestRender();
+                })
+                .on('end', () => {
+                    svg.style('cursor', 'grab');
+                    lastRotation = (ortho.rotate && ortho.rotate()) || [0, 0, 0];
+                }));
+
+            // Smooth wheel zoom by adjusting orthographic scale (RAF-batched)
+            svg.on('wheel.zoom', (event: WheelEvent) => {
+                event.preventDefault();
+                const s0 = +ortho.scale();
+                const k = Math.pow(1.002, -event.deltaY); // smooth factor
+                const s = Math.max(minScale, Math.min(maxScale, s0 * k));
+                if (s === s0) return;
+                ortho.scale(s);
+                requestRender();
+            }, { passive: false } as any);
+
+            // Double-click resets rotation (RAF-batched render)
+            svg.on('dblclick.reset', () => {
+                ortho.rotate([0, 0, 0]);
+                lastRotation = [0, 0, 0];
+                requestRender();
+            });
         } else {
             (svg as any).on('.drag', null);
             (svg as any).on('dblclick.reset', null);
@@ -595,15 +735,13 @@ const K_MAG_MAP_APP = {
             const zoomed = (event: { transform: d3.ZoomTransform }) => {
                 this.currentZoomTransform = event.transform;
                 clippedGroup.attr('transform', event.transform.toString());
-
                 // --- DYNAMICALLY Calculate visible geographic bounds for contour culling ---
-                const { k, x, y } = event.transform;
+                const { k, x, y } = event.transform as any;
                 // Invert screen corners to get lon/lat bounds
                 const topLeft = (this.projection as any).invert([(0 - x) / k, (0 - y) / k]);
                 const bottomRight = (this.projection as any).invert([(mapWidth - x) / k, (mapHeight - y) / k]);
                 this.currentViewportBounds = { minLon: topLeft[0], maxLon: bottomRight[0], minLat: bottomRight[1], maxLat: topLeft[1] };
-
-                const t = event.transform;
+                const t = event.transform as any;
                 const apply = (pt: [number, number]) => [pt[0] * t.k + t.x, pt[1] * t.k + t.y];
                 const proj = this.projection as any;
                 svg.selectAll<SVGGElement, DipPole>('g.dip-pole').each(function(d: DipPole) {
@@ -637,16 +775,15 @@ const K_MAG_MAP_APP = {
                 }
 
                 this.redrawTimeout = window.setTimeout(() => {
-                    // FIXED: Check and use lastFieldType to prevent type error
                     if (!this.lastFieldType) return;
-                    const k = event.transform.k;
+                    const kNow = (event.transform as any).k;
 
                     const oldOpts = this.getContourOptionsForZoom(this.lastFieldType, this.lastContourZoomLevel);
-                    const newOpts = this.getContourOptionsForZoom(this.lastFieldType, k);
+                    const newOpts = this.getContourOptionsForZoom(this.lastFieldType, kNow);
 
                     if (oldOpts.step !== newOpts.step) {
-                        this.REDRAW_CONTOURS(); // FIXED: Typo corrected
-                        this.lastContourZoomLevel = k;
+                        this.REDRAW_CONTOURS();
+                        this.lastContourZoomLevel = kNow;
                     }
                 }, 250);
             };
@@ -723,9 +860,16 @@ const K_MAG_MAP_APP = {
             });
         }
 
+        // Click handler: feed SVG-internal coordinates to the click logic
         svg.on("click", (event: MouseEvent) => {
             try {
-                const [x, y] = d3.pointer(event);
+                const node = svg.node() as SVGSVGElement;
+                const rect = node.getBoundingClientRect();
+                const [sx, sy] = (d3 as any).pointer(event, node);
+                const scaleX = mapWidth / rect.width;
+                const scaleY = mapHeight / rect.height;
+                const x = sx * scaleX;
+                const y = sy * scaleY;
                 this.HANDLE_MAP_CLICK(x, y);
             } catch (error) {
                 console.error("Error handling click event:", error);
@@ -787,7 +931,6 @@ const K_MAG_MAP_APP = {
         if (!this.IS_POINT_IN_MAP(par_x, par_y)) return;
         try {
             const proj = this.projection as any;
-            if (!proj || typeof proj.invert !== 'function') return;
             // Account for current zoom/pan in planar (Mercator) mode
             let localX = par_x;
             let localY = par_y;
@@ -1168,7 +1311,7 @@ const K_MAG_MAP_APP = {
         const lonAbsArr = d3.range(0, 360, 360 / (width - 1)).concat(360);
 
         for (let loc_i = 0; loc_i < height; loc_i++) {
-            for (let loc_j = 0; loc_j < width; loc_j++) {
+            for ( let loc_j = 0; loc_j < width; loc_j++) {
                 let loc_lat = 90 - latAbsArr[loc_i]; let lon = lonAbsArr[loc_j] - 180;
                 const pointGeomag = new CL_GEOMAG();
                 pointGeomag.modelData = geomagInstance.modelData;
@@ -1299,3 +1442,4 @@ const K_MAG_MAP_APP = {
 };
 
 K_MAG_MAP_APP.INIT();
+
