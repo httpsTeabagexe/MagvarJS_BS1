@@ -201,6 +201,12 @@ const K_MAG_MAP_APP = {
             }
         });
 
+        // --- Search utilities listeners ---
+        const searchCoordBtn = document.getElementById('searchCoordBtn') as HTMLButtonElement | null;
+        const searchValueBtn = document.getElementById('searchValueBtn') as HTMLButtonElement | null;
+        if (searchCoordBtn) searchCoordBtn.addEventListener('click', () => this.HANDLE_SEARCH_COORD());
+        if (searchValueBtn) searchValueBtn.addEventListener('click', () => this.HANDLE_SEARCH_VALUE());
+
         smoothingButton.setAttribute('aria-pressed', String(this.isSmoothingEnabled));
         this.UPD_UNCERTAINTY_BTN_STATE();
 
@@ -1458,7 +1464,117 @@ const K_MAG_MAP_APP = {
         }
 
         graticuleGroup.selectAll("text").attr("dy", ".35em");
-    }
+    },
+
+    // --- Search helpers and handlers ---
+    QUANTITY_TO_PARAM: function(q: string): { key: ParamKey, name: string, units: string } | null {
+        switch (q) {
+            case 'declination': return { key: 'd_deg', name: 'Declination', units: '°' } as const;
+            case 'inclination': return { key: 'i_deg', name: 'Inclination', units: '°' } as const;
+            case 'totalfield': return { key: 'f', name: 'Total Field', units: 'nT' } as const;
+            case 'h': return { key: 'h', name: 'Horizontal (H)', units: 'nT' } as const;
+            case 'x': return { key: 'x', name: 'X (North)', units: 'nT' } as const;
+            case 'y': return { key: 'y', name: 'Y (East)', units: 'nT' } as const;
+            case 'z': return { key: 'z', name: 'Z (Down)', units: 'nT' } as const;
+            default: return null;
+        }
+    },
+
+    VALUE_COLOR: function(key: ParamKey, value: number): string {
+        if (key === 'd_deg' || key === 'i_deg') return value === 0 ? 'green' : (value > 0 ? '#C00000' : '#0000A0');
+        if (key === 'f') return '#8B0000';
+        return '#9B59B6';
+    },
+
+    LONLAT_TO_SVG_POINT: function(lon: number, lat: number): { x: number, y: number } | null {
+        if (!this.projection) return null;
+        const p = (this.projection as any)([lon, lat]);
+        if (!p || !isFinite(p[0]) || !isFinite(p[1])) return null;
+        if (this.projectionType !== 'globe' && this.currentZoomTransform) {
+            const t: any = this.currentZoomTransform;
+            return { x: p[0] * t.k + t.x, y: p[1] * t.k + t.y };
+        }
+        return { x: p[0], y: p[1] };
+    },
+
+    HANDLE_SEARCH_COORD: function(): void {
+        const latEl = document.getElementById('searchLat') as HTMLInputElement | null;
+        const lonEl = document.getElementById('searchLon') as HTMLInputElement | null;
+        if (!latEl || !lonEl) return;
+        const lat = parseFloat(latEl.value);
+        const lon = parseFloat(lonEl.value);
+        if (!isFinite(lat) || !isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+            this.UPD_STATUS('Enter valid latitude (−90..90) and longitude (−180..180).', true);
+            return;
+        }
+        if (!this.projection) { this.UPD_STATUS('Please render a map first.', true); return; }
+        const pt = this.LONLAT_TO_SVG_POINT(lon, lat);
+        if (!pt) { this.UPD_STATUS('Point is not visible in current projection.', true); return; }
+        const coords: [number, number] = [lon, lat];
+        const fieldData = this.GET_POINT_FIELD(coords);
+        if (!fieldData) return;
+        this.currentClickPoint = { x: pt.x, y: pt.y, lon, lat };
+        this.SHOW_COORD_INFO(pt.x, pt.y, coords, fieldData);
+        this.DRAW_ISOLINES_FROM_POINT(coords, fieldData);
+    },
+
+    HANDLE_SEARCH_VALUE: function(): void {
+        const sel = document.getElementById('searchQuantity') as HTMLSelectElement | null;
+        const valEl = document.getElementById('searchValue') as HTMLInputElement | null;
+        if (!sel || !valEl) return;
+        const mapped = this.QUANTITY_TO_PARAM(sel.value);
+        const rawValue = parseFloat(valEl.value);
+        if (!mapped || !isFinite(rawValue)) { this.UPD_STATUS('Pick a quantity and enter a numeric target value.', true); return; }
+        if (!this.projection || !this.geomagInstance) { this.UPD_STATUS('Please render a map first.', true); return; }
+        this.DRAW_VALUE_ISOLINE(mapped.key, rawValue, mapped.name, mapped.units);
+    },
+
+    DRAW_VALUE_ISOLINE: function(paramKey: ParamKey, value: number, nameForLabel: string, units: string): void {
+        const container = d3.select<SVGGElement, unknown>('#geomag-map-clipped-group');
+        if (container.empty()) { this.UPD_STATUS('Please render a map first.', true); return; }
+        this.CLR_CLICK_ELEMENTS();
+
+        let grid: GridData | null = null;
+        if (this.lastGridData && this.lastParamKey === paramKey) {
+            grid = this.lastGridData;
+        } else {
+            const epochInput = document.getElementById('epochInput') as HTMLInputElement;
+            const altitudeInput = document.getElementById('altitudeInput') as HTMLInputElement;
+            const currentEpoch = parseFloat(epochInput.value);
+            const currentAltitude = parseFloat(altitudeInput.value);
+            const common: CommonArgs = { geomagInstance: this.geomagInstance as CL_GEOMAG, epoch: currentEpoch, altitudeKm: currentAltitude };
+            grid = this.GENERATE_GRID_DATA(common, paramKey);
+            if (this.isSmoothingEnabled) this.APPLY_GAUSSIAN_BLUR(grid.values, grid.width, grid.height, 1.5);
+        }
+
+        const isoGeo = this.BUILD_SINGLE_CONTOUR_GEOJSON(grid, value);
+        if (!isoGeo) { this.UPD_STATUS(`No isoline found for ${nameForLabel} = ${value}${units ? ' ' + units : ''}.`, true); return; }
+
+        let pickLon = 0, pickLat = 0;
+        try {
+            const seg = (isoGeo as any).coordinates && (isoGeo as any).coordinates[0];
+            if (seg && seg.length >= 2) { pickLon = (seg[0][0] + seg[1][0]) / 2; pickLat = (seg[0][1] + seg[1][1]) / 2; }
+        } catch (_) {}
+        const pt = this.LONLAT_TO_SVG_POINT(pickLon, pickLat);
+        if (!pt) { this.UPD_STATUS('Isoline is outside the visible area.', true); return; }
+
+        const pathGenerator = d3.geoPath().projection(this.projection as any);
+        this.currentIsolines = container.append('g').attr('class', 'isolines-group');
+        this.currentIsolines.append('path')
+            .datum(isoGeo)
+            .attr('d', pathGenerator as any)
+            .attr('class', 'isolines')
+            .style('fill', 'none')
+            .style('stroke', this.VALUE_COLOR(paramKey, value))
+            .style('stroke-width', 2)
+            .style('stroke-dasharray', '4,3');
+        this.currentClickPoint = { x: pt.x, y: pt.y, lon: pickLon, lat: pickLat };
+        this.currentIsolines.append('circle').attr('class', 'click-marker').attr('cx', pt.x).attr('cy', pt.y).attr('r', 4).attr('fill', '#ff3333').attr('stroke', 'white').attr('stroke-width', 1);
+        this.currentIsolines.append('text').attr('x', pt.x + 10).attr('y', pt.y - 10).attr('class', 'isolines-label').style('font-size', '11px').style('font-family', 'Arial, sans-serif').style('fill', '#111').text(`${nameForLabel} = ${value}${units ? ' ' + units : ''}`);
+
+        const fieldData = this.GET_POINT_FIELD([pickLon, pickLat]);
+        if (fieldData) this.SHOW_COORD_INFO(pt.x, pt.y, [pickLon, pickLat], fieldData);
+    },
 };
 
 K_MAG_MAP_APP.INIT();

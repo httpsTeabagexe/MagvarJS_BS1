@@ -49,6 +49,38 @@
         <button type="button" id="smoothingButton" aria-pressed="true">Toggle Smoothing</button>
         <button type="button" id="uncertaintyButton" aria-pressed="false">Toggle Uncertainty</button>
         <div id="status">Enter parameters and click "Render Map".</div>
+
+        <!-- Search Utilities -->
+        <div class="control-group">
+            <label>Search</label>
+            <div class="search-section">
+                <div class="search-block">
+                    <div class="search-title">By Coordinates</div>
+                    <div class="search-row">
+                        <input type="number" id="searchLat" placeholder="Latitude (−90…90)" step="0.01" min="-90" max="90">
+                        <input type="number" id="searchLon" placeholder="Longitude (−180…180)" step="0.01" min="-180" max="180">
+                        <button type="button" id="searchCoordBtn" title="Show this point on the map">Go</button>
+                    </div>
+                </div>
+                <div class="search-block">
+                    <div class="search-title">By Value</div>
+                    <div class="search-row">
+                        <select id="searchQuantity" title="Pick a field or component to match">
+                            <option value="declination">Declination (°)</option>
+                            <option value="inclination">Inclination (°)</option>
+                            <option value="totalfield">Total Intensity F (nT)</option>
+                            <option value="h">Horizontal Intensity H (nT)</option>
+                            <option value="x">X North (nT)</option>
+                            <option value="y">Y East (nT)</option>
+                            <option value="z">Z Down (nT)</option>
+                        </select>
+                        <input type="number" id="searchValue" placeholder="Target value" step="0.1">
+                        <button type="button" id="searchValueBtn" title="Find isoline for this value">Find</button>
+                    </div>
+                    <small class="search-hint">Find and draw the isoline where the chosen quantity equals the target value. Picks a nearby point to inspect.</small>
+                </div>
+            </div>
+        </div>
     </form>
 </div>
 
