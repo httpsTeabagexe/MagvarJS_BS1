@@ -455,607 +455,606 @@
                     }
                 }
             }
-       }
+   }
 
-        /**
-         * Calculates geomagnetic field components (D, I, F, H, X, Y, Z) for given parameters.
-         * @param {number} par_sdate - Decimal year (epoch).
-         * @param {number} par_igdgc - 1 for Geodetic (WGS84), 2 for Geocentric.
-         * @param {number} par_alt - Altitude in km.
-         * @param {number} par_lat - Latitude in degrees.
-         * @param {number} par_long - Longitude in degrees.
-         * @returns {object} Object with d_deg, i_deg, f: NaN, h: NaN, x: NaN, y: NaN, z: NaN };
-         */
-        getFieldComponents(par_sdate, par_igdgc, par_alt, par_lat, par_long) {
-            let loc_model_i;
-            for (loc_model_i = 0; loc_model_i < this.nmodel; loc_model_i++) {
-                if (par_sdate < this.yrmax[loc_model_i]) break;
-            }
-            if (loc_model_i === this.nmodel) loc_model_i--;
-            if (loc_model_i < 0 || loc_model_i >= this.nmodel || !this.irec_pos || !this.irec_pos[loc_model_i]) {
+    /**
+     * Calculates geomagnetic field components (D, I, F, H, X, Y, Z) for given parameters.
+     * @param {number} par_sdate - Decimal year (epoch).
+     * @param {number} par_igdgc - 1 for Geodetic (WGS84), 2 for Geocentric.
+     * @param {number} par_alt - Altitude in km.
+     * @param {number} par_lat - Latitude in degrees.
+     * @param {number} par_long - Longitude in degrees.
+     * @returns {object} Object with d_deg, i_deg, f: NaN, h: NaN, x: NaN, y: NaN, z: NaN };
+     */
+    getFieldComponents(par_sdate, par_igdgc, par_alt, par_lat, par_long) {
+        let loc_model_i;
+        for (loc_model_i = 0; loc_model_i < this.nmodel; loc_model_i++) {
+            if (par_sdate < this.yrmax[loc_model_i]) break;
+        }
+        if (loc_model_i === this.nmodel) loc_model_i--;
+        if (loc_model_i < 0 || loc_model_i >= this.nmodel || !this.irec_pos || !this.irec_pos[loc_model_i]) {
+            return { d_deg: NaN, i_deg: NaN, f: NaN, h: NaN, x: NaN, y: NaN, z: NaN };
+        }
+        let loc_nmax;
+        if (this.max2[loc_model_i] === 0) { // Interpolation
+            if (loc_model_i + 1 >= this.nmodel || !this.irec_pos[loc_model_i + 1]) {
                 return { d_deg: NaN, i_deg: NaN, f: NaN, h: NaN, x: NaN, y: NaN, z: NaN };
             }
-            let loc_nmax;
-            if (this.max2[loc_model_i] === 0) { // Interpolation
-                if (loc_model_i + 1 >= this.nmodel || !this.irec_pos[loc_model_i + 1]) {
-                    return { d_deg: NaN, i_deg: NaN, f: NaN, h: NaN, x: NaN, y: NaN, z: NaN };
-                }
-                this.getshc(1, this.irec_pos[loc_model_i], this.max1[loc_model_i], 1);
-                this.getshc(1, this.irec_pos[loc_model_i + 1], this.max1[loc_model_i + 1], 2);
-                loc_nmax = this.interpsh(par_sdate, this.yrmin[loc_model_i], this.max1[loc_model_i], this.yrmin[loc_model_i + 1], this.max1[loc_model_i + 1], 3);
-            } else { // Extrapolation
-                this.getshc(1, this.irec_pos[loc_model_i], this.max1[loc_model_i], 1);
-                this.getshc(0, this.irec_pos[loc_model_i], this.max2[loc_model_i], 2);
-                loc_nmax = this.extrapsh(par_sdate, this.epoch[loc_model_i], this.max1[loc_model_i], this.max2[loc_model_i], 3);
-            }
-            this.sh_val_3(par_igdgc, par_lat, par_long, par_alt, loc_nmax, 3);
-            this.dihf(3);
-            const d_deg = this.d * GL_RAD_TO_DEG;
-            const i_deg = this.i * GL_RAD_TO_DEG;
-            let loc_final_x = this.x, loc_final_y = this.y, loc_final_d_deg = d_deg;
-            if (Math.abs(90.0 - Math.abs(par_lat)) <= 0.001) {
-                loc_final_x = NaN; loc_final_y = NaN; loc_final_d_deg = NaN;
-            }
-            return {
-                modelName: this.model[loc_model_i],
-                d_deg: loc_final_d_deg, i_deg, h: this.h, x: loc_final_x, y: loc_final_y, z: this.z, f: this.f
-            };
+            this.getshc(1, this.irec_pos[loc_model_i], this.max1[loc_model_i], 1);
+            this.getshc(1, this.irec_pos[loc_model_i + 1], this.max1[loc_model_i + 1], 2);
+            loc_nmax = this.interpsh(par_sdate, this.yrmin[loc_model_i], this.max1[loc_model_i], this.yrmin[loc_model_i + 1], this.max1[loc_model_i + 1], 3);
+        } else { // Extrapolation
+            this.getshc(1, this.irec_pos[loc_model_i], this.max1[loc_model_i], 1);
+            this.getshc(0, this.irec_pos[loc_model_i], this.max2[loc_model_i], 2);
+            loc_nmax = this.extrapsh(par_sdate, this.epoch[loc_model_i], this.max1[loc_model_i], this.max2[loc_model_i], 3);
         }
-    }
-
-
-    // --- Output Formatting and UI Helper Functions ---
-
-    function print_dashed_line() { console.log(' -------------------------------------------------------------------------------'); }
-    function print_long_dashed_line() { console.log(' - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -'); }
-
-    function print_header() {
-        print_dashed_line();
-        console.log('   Date          D           I           H        X        Y        Z        F');
-        console.log('   (yr)      (deg min)   (deg min)     (nT)     (nT)     (nT)     (nT)     (nT)');
-    }
-
-    function print_header_sv() {
-        console.log('   Date         dD          dI           dH       dX       dY       dZ       dF');
-        console.log('   (yr)      (min/yr)    (min/yr)    (nT/yr)  (nT/yr)  (nT/yr)  (nT/yr)  (nT/yr)');
-    }
-
-    function format_angle(par_angle) {
-        if (Number.isNaN(par_angle)) return { deg: 'NaN', min: '' };
-        let loc_deg = Math.trunc(par_angle);
-        let loc_min = (par_angle - loc_deg) * 60;
-        if (par_angle > 0 && loc_min >= 59.5) { loc_min -= 60; loc_deg++; }
-        if (par_angle < 0 && loc_min <= -59.5) { loc_min += 60; loc_deg--; }
-        if (loc_deg !== 0) loc_min = Math.abs(loc_min);
-        return { deg: loc_deg, min: Math.round(loc_min) };
-    }
-
-    function print_result(par_date, par_d_deg, par_i_deg, par_h, par_x, par_y, par_z, par_f) {
-        const d_ang = format_angle(par_d_deg), i_ang = format_angle(par_i_deg);
-        const date_str = par_date.toFixed(2).padStart(7);
-        const d_str = Number.isNaN(par_d_deg) ? '     NaN    ' : `${String(d_ang.deg).padStart(4)} ${String(d_ang.min).padStart(2)}'`;
-        const i_str = `${String(i_ang.deg).padStart(4)} ${String(i_ang.min).padStart(2)}'`;
-        console.log(`${date_str}  ${d_str}  ${i_str}  ${par_h.toFixed(1).padStart(8)} ${par_x.toFixed(1).padStart(8)} ${par_y.toFixed(1).padStart(8)} ${par_z.toFixed(1).padStart(8)} ${par_f.toFixed(1).padStart(8)}`);
-    }
-
-    function print_result_sv(par_date, par_dd, par_id, par_hd, par_xd, par_yd, par_zd, par_fd) {
-        const date_str = par_date.toFixed(2).padStart(7);
-        const fmt = par_v => Number.isNaN(par_v) ? '     NaN' : par_v.toFixed(1).padStart(8);
-        console.log(`${date_str}  ${fmt(par_dd)}   ${fmt(par_id)}    ${fmt(par_hd)} ${fmt(par_xd)} ${fmt(par_yd)} ${fmt(par_zd)} ${fmt(par_fd)}`);
-    }
-
-    function display_warnings(par_geomag, par_lat) {
-        if (par_geomag.h < 5000.0 && par_geomag.h >= 1000.0) {
-            console.log(`\nWarning: The horizontal field strength is only ${par_geomag.h.toFixed(1)} nT. Compass readings have large uncertainties.`);
-        }
-        if (par_geomag.h < 1000.0) {
-            console.log(`\nWarning: The horizontal field strength is only ${par_geomag.h.toFixed(1)} nT. Compass readings have VERY LARGE uncertainties.`);
-        }
+        this.sh_val_3(par_igdgc, par_lat, par_long, par_alt, loc_nmax, 3);
+        this.dihf(3);
+        const d_deg = this.d * GL_RAD_TO_DEG;
+        const i_deg = this.i * GL_RAD_TO_DEG;
+        let loc_final_x = this.x, loc_final_y = this.y, loc_final_d_deg = d_deg;
         if (Math.abs(90.0 - Math.abs(par_lat)) <= 0.001) {
-            console.log("\nWarning: Location is at a geographic pole. X, Y, and declination are not computed.");
+            loc_final_x = NaN; loc_final_y = NaN; loc_final_d_deg = NaN;
         }
-    }
-
-    // --- Core Calculation and Application Logic ---
-
-    /**
-     * Performs a single geomagnetic calculation for a given set of parameters.
-     * @param {CL_GEOMAG} par_geomag - The geomag model instance.
-     * @param {object} par_params - { sdate, igdgc, alt, latitude, longitude }
-     * @returns {boolean} - true if successful, false otherwise.
-     */
-    function CALCULATE_POINT(par_geomag, par_params) {
-        const { sdate: SDATE, igdgc, alt, latitude: LATITUDE, longitude } = par_params;
-
-        // Select the appropriate geomagnetic model based on the input date
-        let loc_model_si;
-        for (loc_model_si = 0; loc_model_si < par_geomag.nmodel; loc_model_si++) {
-            if (SDATE < par_geomag.yrmax[loc_model_si]) break;
-        }
-        if (loc_model_si === par_geomag.nmodel) loc_model_si--;
-
-        // Prepare spherical harmonic coefficients for the requested date:
-        let loc_nmax;
-        if (par_geomag.max2[loc_model_si] === 0) { // Interpolation between two models
-            par_geomag.getshc(1, par_geomag.irec_pos[loc_model_si], par_geomag.max1[loc_model_si], 1);
-            par_geomag.getshc(1, par_geomag.irec_pos[loc_model_si + 1], par_geomag.max1[loc_model_si + 1], 2);
-            loc_nmax = par_geomag.interpsh(SDATE, par_geomag.yrmin[loc_model_si], par_geomag.max1[loc_model_si], par_geomag.yrmin[loc_model_si + 1], par_geomag.max1[loc_model_si + 1], 3);
-            par_geomag.interpsh(SDATE + 1, par_geomag.yrmin[loc_model_si], par_geomag.max1[loc_model_si], par_geomag.yrmin[loc_model_si + 1], par_geomag.max1[loc_model_si + 1], 4);
-        } else { // Extrapolation using secular variation
-            par_geomag.getshc(1, par_geomag.irec_pos[loc_model_si], par_geomag.max1[loc_model_si], 1);
-            par_geomag.getshc(0, par_geomag.irec_pos[loc_model_si], par_geomag.max2[loc_model_si], 2);
-            loc_nmax = par_geomag.extrapsh(SDATE, par_geomag.epoch[loc_model_si], par_geomag.max1[loc_model_si], par_geomag.max2[loc_model_si], 3);
-            par_geomag.extrapsh(SDATE + 1, par_geomag.epoch[loc_model_si], par_geomag.max1[loc_model_si], par_geomag.max2[loc_model_si], 4);
-        }
-
-        // Calculate geomagnetic field vector components
-        par_geomag.sh_val_3(igdgc, LATITUDE, longitude, alt, loc_nmax, 3); // for date
-        par_geomag.dihf(3);
-        par_geomag.sh_val_3(igdgc, LATITUDE, longitude, alt, loc_nmax, 4); // for date + 1 year
-        par_geomag.dihf(4);
-
-        // -- Output Results --
-        // Convert radians to degrees for printing
-        const D_DEG = par_geomag.d * GL_RAD_TO_DEG;
-        const I_DEG = par_geomag.i * GL_RAD_TO_DEG;
-
-        // Compute annual change (secular variation)
-        let loc_d_dot = (par_geomag.dtemp - par_geomag.d) * GL_RAD_TO_DEG;
-        if (loc_d_dot > 180.0) loc_d_dot -= 360.0;
-        if (loc_d_dot <= -180.0) loc_d_dot += 360.0;
-        loc_d_dot *= 60.0; // Convert to minutes/year
-
-        const IDOT = (par_geomag.itemp - par_geomag.i) * GL_RAD_TO_DEG * 60.0;
-        const HDOT = par_geomag.htemp - par_geomag.h;
-        const XDOT = par_geomag.xtemp - par_geomag.x;
-        const YDOT = par_geomag.ytemp - par_geomag.y;
-        const ZDOT = par_geomag.ztemp - par_geomag.z;
-        const FDOT = par_geomag.ftemp - par_geomag.f;
-
-        // Handle special cases for printing
-        let loc_final_d_deg = D_DEG;
-        let loc_final_x = par_geomag.x, loc_final_y = par_geomag.y;
-        let loc_final_ddot = loc_d_dot;
-        if (par_geomag.h < 100.0) { loc_final_d_deg = NaN; loc_final_ddot = NaN; }
-        if (Math.abs(90.0 - Math.abs(LATITUDE)) <= 0.001) {
-            loc_final_x = NaN; loc_final_y = NaN; loc_final_d_deg = NaN; loc_final_ddot = NaN;
-        }
-
-        console.log(`\n\n\n  Model: ${par_geomag.model[loc_model_si]}`);
-        console.log(`  Latitude:  ${LATITUDE.toFixed(2)} deg`);
-        console.log(`  Longitude: ${longitude.toFixed(2)} deg`);
-        console.log(`  Altitude:  ${alt.toFixed(2)} km`);
-        console.log(`  Date:      ${SDATE.toFixed(2)}\n`);
-
-        print_header();
-        print_result(SDATE, loc_final_d_deg, I_DEG, par_geomag.h, loc_final_x, loc_final_y, par_geomag.z, par_geomag.f);
-        print_long_dashed_line();
-        print_header_sv();
-        print_result_sv(SDATE, loc_final_ddot, IDOT, HDOT, XDOT, YDOT, ZDOT, FDOT);
-        print_dashed_line();
-
-        display_warnings(par_geomag, LATITUDE);
-        return true;
-    }
-
-    /**
-     * Prompts user for parameters to calculate a single point.
-     * @param {CL_GEOMAG} par_geomag - The geomag model instance.
-     */
-    function CALC_SINGLE_POINT(par_geomag) {
-        const { minyr, maxyr: MAX_YR } = par_geomag;
-        let loc_s_date = -1, loc_igdgc = -1, loc_alt = -999999, loc_lat = 200, loc_long = 200;
-
-        while (loc_s_date < minyr || loc_s_date > MAX_YR + 1) {
-            loc_s_date = parseFloat(prompt(`Enter decimal date (${minyr.toFixed(2)} to ${MAX_YR.toFixed(0)}): `));
-            if (loc_s_date > MAX_YR && loc_s_date < MAX_YR + 1) {
-                console.log(`Warning: Date ${loc_s_date.toFixed(2)} is out of range but within one year of model expiration.`);
-            }
-        }
-
-        while (loc_igdgc !== 1 && loc_igdgc !== 2) {
-            console.log("\nEnter Coordinate Preference:\n    1) Geodetic (WGS84)\n    2) Geocentric (spherical)");
-            loc_igdgc = parseInt(prompt("Selection ==> "));
-        }
-
-        const MIN_ALT_DISP = loc_igdgc === 2 ? par_geomag.altmin[0] + 6371.2 : par_geomag.altmin[0];
-        const MAX_ALT_DISP = loc_igdgc === 2 ? par_geomag.altmax[0] + 6371.2 : par_geomag.altmax[0];
-        loc_alt = parseFloat(prompt(`Enter altitude in km (${MIN_ALT_DISP.toFixed(2)} to ${MAX_ALT_DISP.toFixed(2)}): `));
-
-        while (loc_lat < -90 || loc_lat > 90) {
-            loc_lat = parseFloat(prompt("Enter decimal loc_latitude (-90 to 90): "));
-        }
-
-        while (loc_long < -180 || loc_long > 180) {
-            loc_long = parseFloat(prompt("Enter decimal loc_long (-180 to 180): "));
-        }
-
-        CALCULATE_POINT(par_geomag, {sdate: loc_s_date, igdgc: loc_igdgc, alt: loc_alt, latitude: loc_lat, longitude: loc_long});
-    }
-
-    // --- START: New functions for NOAA-style output ---
-
-    /**
-     * Prints a table of geomagnetic data formatted to match the ngdc.noaa.gov website style.
-     * @param {Array<object>} par_results - Array of calculation result objects for each date.
-     * @param {object} par_sv - Object containing the secular variation (annual change) data.
-     * @param {object} par_loc_Info - Object with location and model details.
-     */
-    function PRINT_NOAA_STYLE_TABLE(par_results, par_sv, par_loc_Info) {
-        const { modelName: MODEL_NAME, latitude, longitude, alt } = par_loc_Info;
-
-        // Helper functions for formatting location
-        const FORMAT_LAT = (par_lat) => `${Math.abs(par_lat).toFixed(0)}° ${par_lat >= 0 ? 'N' : 'S'}`;
-        const FORMAT_LON = (par_lon) => `${Math.abs(par_lon).toFixed(0)}° ${par_lon > 0 ? 'E' : 'W'}`;
-
-        // --- Column Widths definitions (inner width, not including separators) ---
-        const WIDTHS = {
-            date: 12,
-            dec: 14,
-            inc: 14,
-            h_int: 20,
-            north: 17,
-            east: 16,
-            vert: 18,
-            total: 15
-        };
-
-        // Calculate total width for the horizontal lines
-        const TOTAL_TABLE_WIDTH = Object.values(WIDTHS).reduce((par_sum, par_w) => par_sum + par_w + 1, 0);
-
-        // --- Build Header Block ---
-        console.log('\n' + '─'.repeat(TOTAL_TABLE_WIDTH));
-        console.log('Magnetic Field');
-        console.log('─'.repeat(TOTAL_TABLE_WIDTH));
-        console.log(`Model Used:  ${MODEL_NAME}`);
-        console.log(`Latitude:    ${FORMAT_LAT(latitude)}`);
-        console.log(`Longitude:   ${FORMAT_LON(longitude)}`);
-        console.log(`Elevation:   ${alt.toFixed(1)} km Mean Sea Level`);
-
-        // --- Build Table Separator Line ---
-        const HLINE = '+' + Object.values(WIDTHS).map(w => '─'.repeat(w)).join('+') + '+';
-        console.log(HLINE);
-
-        // --- Build Table Header ---
-        const HEADER1 = `| ${'Date'.padEnd(WIDTHS.date - 1)}` +
-                        `| ${'Declination'.padEnd(WIDTHS.dec - 1)}` +
-                        `| ${'Inclination'.padEnd(WIDTHS.inc - 1)}` +
-                        `| ${'Horizontal'.padEnd(WIDTHS.h_int - 1)}` +
-                        `| ${'North Comp'.padEnd(WIDTHS.north - 1)}` +
-                        `| ${'East Comp'.padEnd(WIDTHS.east - 1)}` +
-                        `| ${'Vertical Comp'.padEnd(WIDTHS.vert - 1)}` +
-                        `| ${'Total Field'.padEnd(WIDTHS.total - 1)}|`;
-
-        const HEADER2 = `| ${''.padEnd(WIDTHS.date - 1)}` +
-                        `| ${'( + E | - W )'.padEnd(WIDTHS.dec - 1)}` +
-                        `| ${'( + D | - U)'.padEnd(WIDTHS.inc - 1)}` +
-                        `| ${'Intensity'.padEnd(WIDTHS.h_int - 1)}` +
-                        `| ${'( + N | - S )'.padEnd(WIDTHS.north - 1)}` +
-                        `| ${'( + E | - W )'.padEnd(WIDTHS.east - 1)}` +
-                        `| ${'( + D | - U )'.padEnd(WIDTHS.vert - 1)}` +
-                        `| ${''.padEnd(WIDTHS.total - 1)}|`;
-
-        console.log(HEADER1);
-        console.log(HEADER2);
-        console.log(HLINE);
-
-        // --- Build Data Rows ---
-        par_results.forEach(par_res => {
-            const ROW = `| ${par_res.dateStr.padEnd(WIDTHS.date - 1)}` +
-                        `|${(par_res.d_deg.toFixed(4) + '°').padStart(WIDTHS.dec)}` +
-                        `|${(par_res.i_deg.toFixed(4) + '°').padStart(WIDTHS.inc)}` +
-                        `|${(par_res.h.toFixed(1) + ' nT').padStart(WIDTHS.h_int)}` +
-                        `|${(par_res.x.toFixed(1) + ' nT').padStart(WIDTHS.north)}` +
-                        `|${(par_res.y.toFixed(1) + ' nT').padStart(WIDTHS.east)}` +
-                        `|${(par_res.z.toFixed(1) + ' nT').padStart(WIDTHS.vert)}` +
-                        `|${(par_res.f.toFixed(1) + ' nT').padStart(WIDTHS.total)}|`;
-            console.log(ROW);
-        });
-
-        // --- Build Change/year Row ---
-        const CHANGE_ROW = `| ${'Change/year'.padEnd(WIDTHS.date - 1)}` +
-                          `|${(par_sv.ddot_deg.toFixed(4) + '°/yr').padStart(WIDTHS.dec)}` +
-                          `|${(par_sv.idot_deg.toFixed(4) + '°/yr').padStart(WIDTHS.inc)}` +
-                          `|${(par_sv.hdot.toFixed(1) + ' nT/yr').padStart(WIDTHS.h_int)}` +
-                          `|${(par_sv.xdot.toFixed(1) + ' nT/yr').padStart(WIDTHS.north)}` +
-                          `|${(par_sv.ydot.toFixed(1) + ' nT/yr').padStart(WIDTHS.east)}` +
-                          `|${(par_sv.zdot.toFixed(1) + ' nT/yr').padStart(WIDTHS.vert)}` +
-                          `|${(par_sv.fdot.toFixed(1) + ' nT/yr').padStart(WIDTHS.total)}|`;
-        console.log(CHANGE_ROW);
-
-        // --- Build Uncertainty Row --- #TODO понять как рассчитывать погрешность
-        const UNCERTAINTY_ROW = `| ${'Uncertainty'.padEnd(WIDTHS.date - 1)}` +
-                               `|${'0.55°'.padStart(WIDTHS.dec)}` +
-                               `|${'0.19°'.padStart(WIDTHS.inc)}` +
-                               `|${'130 nT'.padStart(WIDTHS.h_int)}` +
-                               `|${'135 nT'.padStart(WIDTHS.north)}` +
-                               `|${'85 nT'.padStart(WIDTHS.east)}` +
-                               `|${'134 nT'.padStart(WIDTHS.vert)}` +
-                               `|${'134 nT'.padStart(WIDTHS.total)}|`;
-        // console.log(uncertaintyRow);
-
-        // --- Build Footer ---
-        console.log(HLINE);
-    }
-
-    /**
-     * Calculates only the main field components for a single date.
-     * @returns {object} An object with the calculated field values.
-     */
-    function CALCULATE_FIELD_AT_DATE(par_geomag, par_sdate, par_igdgc, par_alt, par_lat, par_long) {
-        let loc_model_i;
-        for (loc_model_i = 0; loc_model_i < par_geomag.nmodel; loc_model_i++) {
-            if (par_sdate < par_geomag.yrmax[loc_model_i]) break;
-        }
-        if (loc_model_i === par_geomag.nmodel) loc_model_i--;
-
-        let loc_n_max;
-        if (par_geomag.max2[loc_model_i] === 0) {
-            par_geomag.getshc(1, par_geomag.irec_pos[loc_model_i], par_geomag.max1[loc_model_i], 1);
-            par_geomag.getshc(1, par_geomag.irec_pos[loc_model_i + 1], par_geomag.max1[loc_model_i + 1], 2);
-            loc_n_max = par_geomag.interpsh(par_sdate, par_geomag.yrmin[loc_model_i], par_geomag.max1[loc_model_i], par_geomag.yrmin[loc_model_i + 1], par_geomag.max1[loc_model_i + 1], 3);
-        } else {
-            par_geomag.getshc(1, par_geomag.irec_pos[loc_model_i], par_geomag.max1[loc_model_i], 1);
-            par_geomag.getshc(0, par_geomag.irec_pos[loc_model_i], par_geomag.max2[loc_model_i], 2);
-            loc_n_max = par_geomag.extrapsh(par_sdate, par_geomag.epoch[loc_model_i], par_geomag.max1[loc_model_i], par_geomag.max2[loc_model_i], 3);
-        }
-
-        par_geomag.sh_val_3(par_igdgc, par_lat, par_long, par_alt, loc_n_max, 3);
-        par_geomag.dihf(3);
-
-        const D_DEG = par_geomag.d * GL_RAD_TO_DEG;
-        const I_DEG = par_geomag.i * GL_RAD_TO_DEG;
-        let loc_final_x = par_geomag.x, final_y = par_geomag.y, final_d_deg = D_DEG;
-
-        if (Math.abs(90.0 - Math.abs(par_lat)) <= 0.001) {
-            loc_final_x = NaN; final_y = NaN; final_d_deg = NaN;
-        }
-
         return {
-            modelName: par_geomag.model[loc_model_i],
-            d_deg: final_d_deg, i_deg: I_DEG, h: par_geomag.h, x: loc_final_x, y: final_y, z: par_geomag.z, f: par_geomag.f
+            modelName: this.model[loc_model_i],
+            d_deg: loc_final_d_deg, i_deg, h: this.h, x: loc_final_x, y: loc_final_y, z: this.z, f: this.f
         };
     }
+}
 
-    /**
-     * Calculates the secular variation (annual change) for a specific date.
-     * @returns {object} An object with the calculated rates of change.
-     */
-    function GET_SECULAR_VARIATION(par_geomag, par_params) {
-        const { sdate, igdgc, alt, latitude, longitude } = par_params;
+// --- Output Formatting and UI Helper Functions ---
 
-        let loc_model_I;
-        for (loc_model_I = 0; loc_model_I < par_geomag.nmodel; loc_model_I++) {
-            if (sdate < par_geomag.yrmax[loc_model_I]) break;
-        }
-        if (loc_model_I === par_geomag.nmodel) loc_model_I--;
+function print_dashed_line() { console.log(' -------------------------------------------------------------------------------'); }
+function print_long_dashed_line() { console.log(' - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -'); }
 
-        let loc_n_max;
-        if (par_geomag.max2[loc_model_I] === 0) {
-            par_geomag.getshc(1, par_geomag.irec_pos[loc_model_I], par_geomag.max1[loc_model_I], 1);
-            par_geomag.getshc(1, par_geomag.irec_pos[loc_model_I + 1], par_geomag.max1[loc_model_I + 1], 2);
-            loc_n_max = par_geomag.interpsh(sdate, par_geomag.yrmin[loc_model_I], par_geomag.max1[loc_model_I], par_geomag.yrmin[loc_model_I + 1], par_geomag.max1[loc_model_I + 1], 3);
-            par_geomag.interpsh(sdate + 1, par_geomag.yrmin[loc_model_I], par_geomag.max1[loc_model_I], par_geomag.yrmin[loc_model_I + 1], par_geomag.max1[loc_model_I + 1], 4);
-        } else {
-            par_geomag.getshc(1, par_geomag.irec_pos[loc_model_I], par_geomag.max1[loc_model_I], 1);
-            par_geomag.getshc(0, par_geomag.irec_pos[loc_model_I], par_geomag.max2[loc_model_I], 2);
-            loc_n_max = par_geomag.extrapsh(sdate, par_geomag.epoch[loc_model_I], par_geomag.max1[loc_model_I], par_geomag.max2[loc_model_I], 3);
-            par_geomag.extrapsh(sdate + 1, par_geomag.epoch[loc_model_I], par_geomag.max1[loc_model_I], par_geomag.max2[loc_model_I], 4);
-        }
+function print_header() {
+    print_dashed_line();
+    console.log('   Date          D           I           H        X        Y        Z        F');
+    console.log('   (yr)      (deg min)   (deg min)     (nT)     (nT)     (nT)     (nT)     (nT)');
+}
 
-        par_geomag.sh_val_3(igdgc, latitude, longitude, alt, loc_n_max, 3);
-        par_geomag.dihf(3);
-        par_geomag.sh_val_3(igdgc, latitude, longitude, alt, loc_n_max, 4);
-        par_geomag.dihf(4);
+function print_header_sv() {
+    console.log('   Date         dD          dI           dH       dX       dY       dZ       dF');
+    console.log('   (yr)      (min/yr)    (min/yr)    (nT/yr)  (nT/yr)  (nT/yr)  (nT/yr)  (nT/yr)');
+}
 
-        let loc_ddot_raw = (par_geomag.dtemp - par_geomag.d) * GL_RAD_TO_DEG;
-        if (loc_ddot_raw > 180.0) loc_ddot_raw -= 360.0;
-        if (loc_ddot_raw <= -180.0) loc_ddot_raw += 360.0;
+function format_angle(par_angle) {
+    if (Number.isNaN(par_angle)) return { deg: 'NaN', min: '' };
+    let loc_deg = Math.trunc(par_angle);
+    let loc_min = (par_angle - loc_deg) * 60;
+    if (par_angle > 0 && loc_min >= 59.5) { loc_min -= 60; loc_deg++; }
+    if (par_angle < 0 && loc_min <= -59.5) { loc_min += 60; loc_deg--; }
+    if (loc_deg !== 0) loc_min = Math.abs(loc_min);
+    return { deg: loc_deg, min: Math.round(loc_min) };
+}
 
-        let loc_ddot_deg = loc_ddot_raw;
-        const IDOT_DEG = (par_geomag.itemp - par_geomag.i) * GL_RAD_TO_DEG;
-        const HDOT = par_geomag.htemp - par_geomag.h;
-        let loc_xdot = par_geomag.xtemp - par_geomag.x;
-        let loc_ydot = par_geomag.ytemp - par_geomag.y;
-        const Z_DOT = par_geomag.ztemp - par_geomag.z;
-        const F_DOT = par_geomag.ftemp - par_geomag.f;
+function print_result(par_date, par_d_deg, par_i_deg, par_h, par_x, par_y, par_z, par_f) {
+    const d_ang = format_angle(par_d_deg), i_ang = format_angle(par_i_deg);
+    const date_str = par_date.toFixed(2).padStart(7);
+    const d_str = Number.isNaN(par_d_deg) ? '     NaN    ' : `${String(d_ang.deg).padStart(4)} ${String(d_ang.min).padStart(2)}'`;
+    const i_str = `${String(i_ang.deg).padStart(4)} ${String(i_ang.min).padStart(2)}'`;
+    console.log(`${date_str}  ${d_str}  ${i_str}  ${par_h.toFixed(1).padStart(8)} ${par_x.toFixed(1).padStart(8)} ${par_y.toFixed(1).padStart(8)} ${par_z.toFixed(1).padStart(8)} ${par_f.toFixed(1).padStart(8)}`);
+}
 
-        if (Math.abs(90.0 - Math.abs(latitude)) <= 0.001) {
-          loc_ddot_deg = NaN; loc_xdot = NaN; loc_ydot = NaN;
-        }
-        return { ddot_deg: loc_ddot_deg, idot_deg: IDOT_DEG, hdot: HDOT, xdot: loc_xdot, ydot: loc_ydot, zdot: Z_DOT, fdot: F_DOT };
+function print_result_sv(par_date, par_dd, par_id, par_hd, par_xd, par_yd, par_zd, par_fd) {
+    const date_str = par_date.toFixed(2).padStart(7);
+    const fmt = par_v => Number.isNaN(par_v) ? '     NaN' : par_v.toFixed(1).padStart(8);
+    console.log(`${date_str}  ${fmt(par_dd)}   ${fmt(par_id)}    ${fmt(par_hd)} ${fmt(par_xd)} ${fmt(par_yd)} ${fmt(par_zd)} ${fmt(par_fd)}`);
+}
+
+function display_warnings(par_geomag, par_lat) {
+    if (par_geomag.h < 5000.0 && par_geomag.h >= 1000.0) {
+        console.log(`\nWarning: The horizontal field strength is only ${par_geomag.h.toFixed(1)} nT. Compass readings have large uncertainties.`);
+    }
+    if (par_geomag.h < 1000.0) {
+        console.log(`\nWarning: The horizontal field strength is only ${par_geomag.h.toFixed(1)} nT. Compass readings have VERY LARGE uncertainties.`);
+    }
+    if (Math.abs(90.0 - Math.abs(par_lat)) <= 0.001) {
+        console.log("\nWarning: Location is at a geographic pole. X, Y, and declination are not computed.");
+    }
+}
+
+// --- Core Calculation and Application Logic ---
+
+/**
+ * Performs a single geomagnetic calculation for a given set of parameters.
+ * @param {CL_GEOMAG} par_geomag - The geomag model instance.
+ * @param {object} par_params - { sdate, igdgc, alt, latitude, longitude }
+ * @returns {boolean} - true if successful, false otherwise.
+ */
+function CALCULATE_POINT(par_geomag, par_params) {
+    const { sdate: SDATE, igdgc, alt, latitude: LATITUDE, longitude } = par_params;
+
+    // Select the appropriate geomagnetic model based on the input date
+    let loc_model_si;
+    for (loc_model_si = 0; loc_model_si < par_geomag.nmodel; loc_model_si++) {
+        if (SDATE < par_geomag.yrmax[loc_model_si]) break;
+    }
+    if (loc_model_si === par_geomag.nmodel) loc_model_si--;
+
+    // Prepare spherical harmonic coefficients for the requested date:
+    let loc_nmax;
+    if (par_geomag.max2[loc_model_si] === 0) { // Interpolation between two models
+        par_geomag.getshc(1, par_geomag.irec_pos[loc_model_si], par_geomag.max1[loc_model_si], 1);
+        par_geomag.getshc(1, par_geomag.irec_pos[loc_model_si + 1], par_geomag.max1[loc_model_si + 1], 2);
+        loc_nmax = par_geomag.interpsh(SDATE, par_geomag.yrmin[loc_model_si], par_geomag.max1[loc_model_si], par_geomag.yrmin[loc_model_si + 1], par_geomag.max1[loc_model_si + 1], 3);
+        par_geomag.interpsh(SDATE + 1, par_geomag.yrmin[loc_model_si], par_geomag.max1[loc_model_si], par_geomag.yrmin[loc_model_si + 1], par_geomag.max1[loc_model_si + 1], 4);
+    } else { // Extrapolation using secular variation
+        par_geomag.getshc(1, par_geomag.irec_pos[loc_model_si], par_geomag.max1[loc_model_si], 1);
+        par_geomag.getshc(0, par_geomag.irec_pos[loc_model_si], par_geomag.max2[loc_model_si], 2);
+        loc_nmax = par_geomag.extrapsh(SDATE, par_geomag.epoch[loc_model_si], par_geomag.max1[loc_model_si], par_geomag.max2[loc_model_si], 3);
+        par_geomag.extrapsh(SDATE + 1, par_geomag.epoch[loc_model_si], par_geomag.max1[loc_model_si], par_geomag.max2[loc_model_si], 4);
     }
 
-    /**
-     * Prompts user for parameters and calculates a range of dates, printing in NOAA format.
-     * @param {CL_GEOMAG} par_geomag - The geomag model instance.
-     */
-    function CALCULATE_DATE_RANGE_NOAA(par_geomag) {
-        console.log('\n--- Calculate Field for a Date Range (NOAA Format) ---');
-        let loc_start_year = parseInt(prompt('Enter start year (e.g. 2025): '));
-        let loc_end_year = parseInt(prompt('Enter end year (e.g. 2029): '));
-        let loc_step = parseInt(prompt('Enter step in years (e.g. 1): '));
+    // Calculate geomagnetic field vector components
+    par_geomag.sh_val_3(igdgc, LATITUDE, longitude, alt, loc_nmax, 3); // for date
+    par_geomag.dihf(3);
+    par_geomag.sh_val_3(igdgc, LATITUDE, longitude, alt, loc_nmax, 4); // for date + 1 year
+    par_geomag.dihf(4);
 
-        let loc_month = parseInt(prompt('Enter month (1-12): '));
-        let loc_day = parseInt(prompt('Enter day (1-31): '));
+    // -- Output Results --
+    // Convert radians to degrees for printing
+    const D_DEG = par_geomag.d * GL_RAD_TO_DEG;
+    const I_DEG = par_geomag.i * GL_RAD_TO_DEG;
 
-        let loc_igdgc = -1;
-        while (loc_igdgc !== 1 && loc_igdgc !== 2) {
-            console.log("\nEnter Coordinate Preference:\n    1) Geodetic (WGS84)\n    2) Geocentric (spherical)");
-            loc_igdgc = parseInt(prompt("Selection ==> "));
+    // Compute annual change (secular variation)
+    let loc_d_dot = (par_geomag.dtemp - par_geomag.d) * GL_RAD_TO_DEG;
+    if (loc_d_dot > 180.0) loc_d_dot -= 360.0;
+    if (loc_d_dot <= -180.0) loc_d_dot += 360.0;
+    loc_d_dot *= 60.0; // Convert to minutes/year
+
+    const IDOT = (par_geomag.itemp - par_geomag.i) * GL_RAD_TO_DEG * 60.0;
+    const HDOT = par_geomag.htemp - par_geomag.h;
+    const XDOT = par_geomag.xtemp - par_geomag.x;
+    const YDOT = par_geomag.ytemp - par_geomag.y;
+    const ZDOT = par_geomag.ztemp - par_geomag.z;
+    const FDOT = par_geomag.ftemp - par_geomag.f;
+
+    // Handle special cases for printing
+    let loc_final_d_deg = D_DEG;
+    let loc_final_x = par_geomag.x, loc_final_y = par_geomag.y;
+    let loc_final_ddot = loc_d_dot;
+    if (par_geomag.h < 100.0) { loc_final_d_deg = NaN; loc_final_ddot = NaN; }
+    if (Math.abs(90.0 - Math.abs(LATITUDE)) <= 0.001) {
+        loc_final_x = NaN; loc_final_y = NaN; loc_final_d_deg = NaN; loc_final_ddot = NaN;
+    }
+
+    console.log(`\n\n\n  Model: ${par_geomag.model[loc_model_si]}`);
+    console.log(`  Latitude:  ${LATITUDE.toFixed(2)} deg`);
+    console.log(`  Longitude: ${longitude.toFixed(2)} deg`);
+    console.log(`  Altitude:  ${alt.toFixed(2)} km`);
+    console.log(`  Date:      ${SDATE.toFixed(2)}\n`);
+
+    print_header();
+    print_result(SDATE, loc_final_d_deg, I_DEG, par_geomag.h, loc_final_x, loc_final_y, par_geomag.z, par_geomag.f);
+    print_long_dashed_line();
+    print_header_sv();
+    print_result_sv(SDATE, loc_final_ddot, IDOT, HDOT, XDOT, YDOT, ZDOT, FDOT);
+    print_dashed_line();
+
+    display_warnings(par_geomag, LATITUDE);
+    return true;
+}
+
+/**
+ * Prompts user for parameters to calculate a single point.
+ * @param {CL_GEOMAG} par_geomag - The geomag model instance.
+ */
+function CALC_SINGLE_POINT(par_geomag) {
+    const { minyr, maxyr: MAX_YR } = par_geomag;
+    let loc_s_date = -1, loc_igdgc = -1, loc_alt = -999999, loc_lat = 200, loc_long = 200;
+
+    while (loc_s_date < minyr || loc_s_date > MAX_YR + 1) {
+        loc_s_date = parseFloat(prompt(`Enter decimal date (${minyr.toFixed(2)} to ${MAX_YR.toFixed(0)}): `));
+        if (loc_s_date > MAX_YR && loc_s_date < MAX_YR + 1) {
+            console.log(`Warning: Date ${loc_s_date.toFixed(2)} is out of range but within one year of model expiration.`);
         }
-        let loc_alt = parseFloat(prompt('Enter altitude in km: '));
-        let loc_lat = parseFloat(prompt('Enter decimal latitude (-90 to 90): '));
-        let loc_long = parseFloat(prompt('Enter decimal longitude (-180 to 180): '));
-        console.log("Calculating...");
+    }
 
-        let loc_results = [];
-        let loc_model_name = '';
+    while (loc_igdgc !== 1 && loc_igdgc !== 2) {
+        console.log("\nEnter Coordinate Preference:\n    1) Geodetic (WGS84)\n    2) Geocentric (spherical)");
+        loc_igdgc = parseInt(prompt("Selection ==> "));
+    }
 
-        // Note: The example image has one odd date (2028-06-30). This loop uses a fixed day/month for simplicity.
-        // The logic can be extended to handle arrays of specific dates if needed.
-        for (let loc_year = loc_start_year; loc_year <= loc_end_year; loc_year += loc_step) {
-            const S_DATE = par_geomag.julday(loc_month, loc_day, loc_year);
-            const DATE_STR = `${loc_year}-${String(loc_month).padStart(2, '0')}-${String(loc_day).padStart(2, '0')}`;
+    const MIN_ALT_DISP = loc_igdgc === 2 ? par_geomag.altmin[0] + 6371.2 : par_geomag.altmin[0];
+    const MAX_ALT_DISP = loc_igdgc === 2 ? par_geomag.altmax[0] + 6371.2 : par_geomag.altmax[0];
+    loc_alt = parseFloat(prompt(`Enter altitude in km (${MIN_ALT_DISP.toFixed(2)} to ${MAX_ALT_DISP.toFixed(2)}): `));
 
-            const pointGeomag = new CL_GEOMAG();
-            pointGeomag.modelData = par_geomag.modelData;
-            Object.assign(pointGeomag, {
-                 model: par_geomag.model, nmodel: par_geomag.nmodel, epoch: par_geomag.epoch,
-                 yrmin: par_geomag.yrmin, yrmax: par_geomag.yrmax, altmin: par_geomag.altmin, altmax: par_geomag.altmax,
-                 max1: par_geomag.max1, max2: par_geomag.max2, max3: par_geomag.max3, irec_pos: par_geomag.irec_pos
-            });
+    while (loc_lat < -90 || loc_lat > 90) {
+        loc_lat = parseFloat(prompt("Enter decimal loc_latitude (-90 to 90): "));
+    }
 
-            const DATA = CALCULATE_FIELD_AT_DATE(pointGeomag, S_DATE, loc_igdgc, loc_alt, loc_lat, loc_long);
-            if (!loc_model_name) loc_model_name = DATA.modelName;
+    while (loc_long < -180 || loc_long > 180) {
+        loc_long = parseFloat(prompt("Enter decimal loc_long (-180 to 180): "));
+    }
 
-            loc_results.push({ sdate: S_DATE, dateStr: DATE_STR, ...DATA });
-        }
+    CALCULATE_POINT(par_geomag, {sdate: loc_s_date, igdgc: loc_igdgc, alt: loc_alt, latitude: loc_lat, longitude: loc_long});
+}
 
-        if (loc_results.length === 0) {
-            console.log("No dates in the specified range. Nothing to calculate.");
-            return;
-        }
+// --- START: New functions for NOAA-style output ---
 
-        const SV_GEOMAG = new CL_GEOMAG();
-        SV_GEOMAG.modelData = par_geomag.modelData;
-        Object.assign(SV_GEOMAG, {
-                model: par_geomag.model, nmodel: par_geomag.nmodel, epoch: par_geomag.epoch,
-                yrmin: par_geomag.yrmin, yrmax: par_geomag.yrmax, altmin: par_geomag.altmin, altmax: par_geomag.altmax,
-                max1: par_geomag.max1, max2: par_geomag.max2, max3: par_geomag.max3, irec_pos: par_geomag.irec_pos
+/**
+ * Prints a table of geomagnetic data formatted to match the ngdc.noaa.gov website style.
+ * @param {Array<object>} par_results - Array of calculation result objects for each date.
+ * @param {object} par_sv - Object containing the secular variation (annual change) data.
+ * @param {object} par_loc_Info - Object with location and model details.
+ */
+function PRINT_NOAA_STYLE_TABLE(par_results, par_sv, par_loc_Info) {
+    const { modelName: MODEL_NAME, latitude, longitude, alt } = par_loc_Info;
+
+    // Helper functions for formatting location
+    const FORMAT_LAT = (par_lat) => `${Math.abs(par_lat).toFixed(0)}° ${par_lat >= 0 ? 'N' : 'S'}`;
+    const FORMAT_LON = (par_lon) => `${Math.abs(par_lon).toFixed(0)}° ${par_lon > 0 ? 'E' : 'W'}`;
+
+    // --- Column Widths definitions (inner width, not including separators) ---
+    const WIDTHS = {
+        date: 12,
+        dec: 14,
+        inc: 14,
+        h_int: 20,
+        north: 17,
+        east: 16,
+        vert: 18,
+        total: 15
+    };
+
+    // Calculate total width for the horizontal lines
+    const TOTAL_TABLE_WIDTH = Object.values(WIDTHS).reduce((par_sum, par_w) => par_sum + par_w + 1, 0);
+
+    // --- Build Header Block ---
+    console.log('\n' + '─'.repeat(TOTAL_TABLE_WIDTH));
+    console.log('Magnetic Field');
+    console.log('─'.repeat(TOTAL_TABLE_WIDTH));
+    console.log(`Model Used:  ${MODEL_NAME}`);
+    console.log(`Latitude:    ${FORMAT_LAT(latitude)}`);
+    console.log(`Longitude:   ${FORMAT_LON(longitude)}`);
+    console.log(`Elevation:   ${alt.toFixed(1)} km Mean Sea Level`);
+
+    // --- Build Table Separator Line ---
+    const HLINE = '+' + Object.values(WIDTHS).map(w => '─'.repeat(w)).join('+') + '+';
+    console.log(HLINE);
+
+    // --- Build Table Header ---
+    const HEADER1 = `| ${'Date'.padEnd(WIDTHS.date - 1)}` +
+                    `| ${'Declination'.padEnd(WIDTHS.dec - 1)}` +
+                    `| ${'Inclination'.padEnd(WIDTHS.inc - 1)}` +
+                    `| ${'Horizontal'.padEnd(WIDTHS.h_int - 1)}` +
+                    `| ${'North Comp'.padEnd(WIDTHS.north - 1)}` +
+                    `| ${'East Comp'.padEnd(WIDTHS.east - 1)}` +
+                    `| ${'Vertical Comp'.padEnd(WIDTHS.vert - 1)}` +
+                    `| ${'Total Field'.padEnd(WIDTHS.total - 1)}|`;
+
+    const HEADER2 = `| ${''.padEnd(WIDTHS.date - 1)}` +
+                    `| ${'( + E | - W )'.padEnd(WIDTHS.dec - 1)}` +
+                    `| ${'( + D | - U)'.padEnd(WIDTHS.inc - 1)}` +
+                    `| ${'Intensity'.padEnd(WIDTHS.h_int - 1)}` +
+                    `| ${'( + N | - S )'.padEnd(WIDTHS.north - 1)}` +
+                    `| ${'( + E | - W )'.padEnd(WIDTHS.east - 1)}` +
+                    `| ${'( + D | - U )'.padEnd(WIDTHS.vert - 1)}` +
+                    `| ${''.padEnd(WIDTHS.total - 1)}|`;
+
+    console.log(HEADER1);
+    console.log(HEADER2);
+    console.log(HLINE);
+
+    // --- Build Data Rows ---
+    par_results.forEach(par_res => {
+        const ROW = `| ${par_res.dateStr.padEnd(WIDTHS.date - 1)}` +
+                    `|${(par_res.d_deg.toFixed(4) + '°').padStart(WIDTHS.dec)}` +
+                    `|${(par_res.i_deg.toFixed(4) + '°').padStart(WIDTHS.inc)}` +
+                    `|${(par_res.h.toFixed(1) + ' nT').padStart(WIDTHS.h_int)}` +
+                    `|${(par_res.x.toFixed(1) + ' nT').padStart(WIDTHS.north)}` +
+                    `|${(par_res.y.toFixed(1) + ' nT').padStart(WIDTHS.east)}` +
+                    `|${(par_res.z.toFixed(1) + ' nT').padStart(WIDTHS.vert)}` +
+                    `|${(par_res.f.toFixed(1) + ' nT').padStart(WIDTHS.total)}|`;
+        console.log(ROW);
+    });
+
+    // --- Build Change/year Row ---
+    const CHANGE_ROW = `| ${'Change/year'.padEnd(WIDTHS.date - 1)}` +
+                      `|${(par_sv.ddot_deg.toFixed(4) + '°/yr').padStart(WIDTHS.dec)}` +
+                      `|${(par_sv.idot_deg.toFixed(4) + '°/yr').padStart(WIDTHS.inc)}` +
+                      `|${(par_sv.hdot.toFixed(1) + ' nT/yr').padStart(WIDTHS.h_int)}` +
+                      `|${(par_sv.xdot.toFixed(1) + ' nT/yr').padStart(WIDTHS.north)}` +
+                      `|${(par_sv.ydot.toFixed(1) + ' nT/yr').padStart(WIDTHS.east)}` +
+                      `|${(par_sv.zdot.toFixed(1) + ' nT/yr').padStart(WIDTHS.vert)}` +
+                      `|${(par_sv.fdot.toFixed(1) + ' nT/yr').padStart(WIDTHS.total)}|`;
+    console.log(CHANGE_ROW);
+
+    // --- Build Uncertainty Row --- #TODO понять как рассчитывать погрешность
+    const UNCERTAINTY_ROW = `| ${'Uncertainty'.padEnd(WIDTHS.date - 1)}` +
+                           `|${'0.55°'.padStart(WIDTHS.dec)}` +
+                           `|${'0.19°'.padStart(WIDTHS.inc)}` +
+                           `|${'130 nT'.padStart(WIDTHS.h_int)}` +
+                           `|${'135 nT'.padStart(WIDTHS.north)}` +
+                           `|${'85 nT'.padStart(WIDTHS.east)}` +
+                           `|${'134 nT'.padStart(WIDTHS.vert)}` +
+                           `|${'134 nT'.padStart(WIDTHS.total)}|`;
+    // console.log(uncertaintyRow);
+
+    // --- Build Footer ---
+    console.log(HLINE);
+}
+
+/**
+ * Calculates only the main field components for a single date.
+ * @returns {object} An object with the calculated field values.
+ */
+function CALCULATE_FIELD_AT_DATE(par_geomag, par_sdate, par_igdgc, par_alt, par_lat, par_long) {
+    let loc_model_i;
+    for (loc_model_i = 0; loc_model_i < par_geomag.nmodel; loc_model_i++) {
+        if (par_sdate < par_geomag.yrmax[loc_model_i]) break;
+    }
+    if (loc_model_i === par_geomag.nmodel) loc_model_i--;
+
+    let loc_n_max;
+    if (par_geomag.max2[loc_model_i] === 0) {
+        par_geomag.getshc(1, par_geomag.irec_pos[loc_model_i], par_geomag.max1[loc_model_i], 1);
+        par_geomag.getshc(1, par_geomag.irec_pos[loc_model_i + 1], par_geomag.max1[loc_model_i + 1], 2);
+        loc_n_max = par_geomag.interpsh(par_sdate, par_geomag.yrmin[loc_model_i], par_geomag.max1[loc_model_i], par_geomag.yrmin[loc_model_i + 1], par_geomag.max1[loc_model_i + 1], 3);
+    } else {
+        par_geomag.getshc(1, par_geomag.irec_pos[loc_model_i], par_geomag.max1[loc_model_i], 1);
+        par_geomag.getshc(0, par_geomag.irec_pos[loc_model_i], par_geomag.max2[loc_model_i], 2);
+        loc_n_max = par_geomag.extrapsh(par_sdate, par_geomag.epoch[loc_model_i], par_geomag.max1[loc_model_i], par_geomag.max2[loc_model_i], 3);
+    }
+
+    par_geomag.sh_val_3(par_igdgc, par_lat, par_long, par_alt, loc_n_max, 3);
+    par_geomag.dihf(3);
+
+    const D_DEG = par_geomag.d * GL_RAD_TO_DEG;
+    const I_DEG = par_geomag.i * GL_RAD_TO_DEG;
+    let loc_final_x = par_geomag.x, final_y = par_geomag.y, final_d_deg = D_DEG;
+
+    if (Math.abs(90.0 - Math.abs(par_lat)) <= 0.001) {
+        loc_final_x = NaN; final_y = NaN; final_d_deg = NaN;
+    }
+
+    return {
+        modelName: par_geomag.model[loc_model_i],
+        d_deg: final_d_deg, i_deg: I_DEG, h: par_geomag.h, x: loc_final_x, y: final_y, z: par_geomag.z, f: par_geomag.f
+    };
+}
+
+/**
+ * Calculates the secular variation (annual change) for a specific date.
+ * @returns {object} An object with the calculated rates of change.
+ */
+function GET_SECULAR_VARIATION(par_geomag, par_params) {
+    const { sdate, igdgc, alt, latitude, longitude } = par_params;
+
+    let loc_model_I;
+    for (loc_model_I = 0; loc_model_I < par_geomag.nmodel; loc_model_I++) {
+        if (sdate < par_geomag.yrmax[loc_model_I]) break;
+    }
+    if (loc_model_I === par_geomag.nmodel) loc_model_I--;
+
+    let loc_n_max;
+    if (par_geomag.max2[loc_model_I] === 0) {
+        par_geomag.getshc(1, par_geomag.irec_pos[loc_model_I], par_geomag.max1[loc_model_I], 1);
+        par_geomag.getshc(1, par_geomag.irec_pos[loc_model_I + 1], par_geomag.max1[loc_model_I + 1], 2);
+        loc_n_max = par_geomag.interpsh(sdate, par_geomag.yrmin[loc_model_I], par_geomag.max1[loc_model_I], par_geomag.yrmin[loc_model_I + 1], par_geomag.max1[loc_model_I + 1], 3);
+        par_geomag.interpsh(sdate + 1, par_geomag.yrmin[loc_model_I], par_geomag.max1[loc_model_I], par_geomag.yrmin[loc_model_I + 1], par_geomag.max1[loc_model_I + 1], 4);
+    } else {
+        par_geomag.getshc(1, par_geomag.irec_pos[loc_model_I], par_geomag.max1[loc_model_I], 1);
+        par_geomag.getshc(0, par_geomag.irec_pos[loc_model_I], par_geomag.max2[loc_model_I], 2);
+        loc_n_max = par_geomag.extrapsh(sdate, par_geomag.epoch[loc_model_I], par_geomag.max1[loc_model_I], par_geomag.max2[loc_model_I], 3);
+        par_geomag.extrapsh(sdate + 1, par_geomag.epoch[loc_model_I], par_geomag.max1[loc_model_I], par_geomag.max2[loc_model_I], 4);
+    }
+
+    par_geomag.sh_val_3(igdgc, latitude, longitude, alt, loc_n_max, 3);
+    par_geomag.dihf(3);
+    par_geomag.sh_val_3(igdgc, latitude, longitude, alt, loc_n_max, 4);
+    par_geomag.dihf(4);
+
+    let loc_ddot_raw = (par_geomag.dtemp - par_geomag.d) * GL_RAD_TO_DEG;
+    if (loc_ddot_raw > 180.0) loc_ddot_raw -= 360.0;
+    if (loc_ddot_raw <= -180.0) loc_ddot_raw += 360.0;
+
+    let loc_ddot_deg = loc_ddot_raw;
+    const IDOT_DEG = (par_geomag.itemp - par_geomag.i) * GL_RAD_TO_DEG;
+    const HDOT = par_geomag.htemp - par_geomag.h;
+    let loc_xdot = par_geomag.xtemp - par_geomag.x;
+    let loc_ydot = par_geomag.ytemp - par_geomag.y;
+    const Z_DOT = par_geomag.ztemp - par_geomag.z;
+    const F_DOT = par_geomag.ftemp - par_geomag.f;
+
+    if (Math.abs(90.0 - Math.abs(latitude)) <= 0.001) {
+      loc_ddot_deg = NaN; loc_xdot = NaN; loc_ydot = NaN;
+    }
+    return { ddot_deg: loc_ddot_deg, idot_deg: IDOT_DEG, hdot: HDOT, xdot: loc_xdot, ydot: loc_ydot, zdot: Z_DOT, fdot: F_DOT };
+}
+
+/**
+ * Prompts user for parameters and calculates a range of dates, printing in NOAA format.
+ * @param {CL_GEOMAG} par_geomag - The geomag model instance.
+ */
+function CALCULATE_DATE_RANGE_NOAA(par_geomag) {
+    console.log('\n--- Calculate Field for a Date Range (NOAA Format) ---');
+    let loc_start_year = parseInt(prompt('Enter start year (e.g. 2025): '));
+    let loc_end_year = parseInt(prompt('Enter end year (e.g. 2029): '));
+    let loc_step = parseInt(prompt('Enter step in years (e.g. 1): '));
+
+    let loc_month = parseInt(prompt('Enter month (1-12): '));
+    let loc_day = parseInt(prompt('Enter day (1-31): '));
+
+    let loc_igdgc = -1;
+    while (loc_igdgc !== 1 && loc_igdgc !== 2) {
+        console.log("\nEnter Coordinate Preference:\n    1) Geodetic (WGS84)\n    2) Geocentric (spherical)");
+        loc_igdgc = parseInt(prompt("Selection ==> "));
+    }
+    let loc_alt = parseFloat(prompt('Enter altitude in km: '));
+    let loc_lat = parseFloat(prompt('Enter decimal latitude (-90 to 90): '));
+    let loc_long = parseFloat(prompt('Enter decimal longitude (-180 to 180): '));
+    console.log("Calculating...");
+
+    let loc_results = [];
+    let loc_model_name = '';
+
+    // Note: The example image has one odd date (2028-06-30). This loop uses a fixed day/month for simplicity.
+    // The logic can be extended to handle arrays of specific dates if needed.
+    for (let loc_year = loc_start_year; loc_year <= loc_end_year; loc_year += loc_step) {
+        const S_DATE = par_geomag.julday(loc_month, loc_day, loc_year);
+        const DATE_STR = `${loc_year}-${String(loc_month).padStart(2, '0')}-${String(loc_day).padStart(2, '0')}`;
+
+        const pointGeomag = new CL_GEOMAG();
+        pointGeomag.modelData = par_geomag.modelData;
+        Object.assign(pointGeomag, {
+             model: par_geomag.model, nmodel: par_geomag.nmodel, epoch: par_geomag.epoch,
+             yrmin: par_geomag.yrmin, yrmax: par_geomag.yrmax, altmin: par_geomag.altmin, altmax: par_geomag.altmax,
+             max1: par_geomag.max1, max2: par_geomag.max2, max3: par_geomag.max3, irec_pos: par_geomag.irec_pos
         });
-        const SV = GET_SECULAR_VARIATION(SV_GEOMAG, { sdate: loc_results[0].sdate, igdgc: loc_igdgc, alt: loc_alt, latitude: loc_lat, longitude: loc_long });
 
-        const LOCATION_INFO = { modelName: loc_model_name, latitude: loc_lat, longitude: loc_long, alt: loc_alt };
-        PRINT_NOAA_STYLE_TABLE(loc_results, SV, LOCATION_INFO);
-    }
-    // --- END: New functions for NOAA-style output ---
+        const DATA = CALCULATE_FIELD_AT_DATE(pointGeomag, S_DATE, loc_igdgc, loc_alt, loc_lat, loc_long);
+        if (!loc_model_name) loc_model_name = DATA.modelName;
 
-    /**
-     * Main program execution: process inputs, perform geomagnetic calculations, and output results.
-     */
-    async function main() {
-        const ARGS = process.argv.slice(2);
-
-        console.log("\n\nGeomag v7.0 (JavaScript port, v3) - Compatible with WMM and IGRF");
-
-        if (ARGS.length > 0) {
-            await RUN_FROM_ARGS(ARGS);
-            return;
-        }
-
-        await RUN_INTERACTIVE();
+        loc_results.push({ sdate: S_DATE, dateStr: DATE_STR, ...DATA });
     }
 
-    /**
-     * Run program from command-line arguments and exit.
-     */
-    async function RUN_FROM_ARGS(par_args) {
-        if (par_args.length === 1 && (par_args[0] === 'h' || par_args[0] === '?')) {
-            console.log("\nUsage (command line): node geomag.js model_file date coord alt lat lon");
-            console.log("Example: node geomag.js IGRF14.COF 2023.5 D K10 55.75 37.61");
-            return;
-        }
-        if (par_args.length < 6) {
-            console.log("Error: Not enough arguments provided for command-line execution.");
-            console.log("Usage: node geomag.js model_file date coord alt lat lon");
-            return;
-        }
-
-        const GEOMAG = new CL_GEOMAG();
-        if (!GEOMAG.loadModelFile(par_args[0])) return;
-
-        const DATE_ARG = par_args[1];
-        let loc_s_date;
-        if (DATE_ARG.includes(',')) {
-            const PARTS = DATE_ARG.split(',');
-            loc_s_date = GEOMAG.julday(parseInt(PARTS[1]), parseInt(PARTS[2]), parseInt(PARTS[0]));
-        } else {
-            loc_s_date = parseFloat(DATE_ARG);
-        }
-
-        const IGDGC = par_args[2].toUpperCase() === 'D' ? 1 : 2;
-        const ALTARG = par_args[3];
-        const UNIT_CHAR = ALTARG.charAt(0).toUpperCase();
-        let loc_alt = parseFloat(ALTARG.substring(1));
-        if (UNIT_CHAR === 'M') loc_alt *= 0.001;
-        else if (UNIT_CHAR === 'F') loc_alt /= GL_FT_TO_KM;
-
-        const LATITUDE = parseFloat(par_args[4]);
-        const LONGITUDE = parseFloat(par_args[5]);
-
-        CALCULATE_POINT(GEOMAG, { sdate: loc_s_date, igdgc: IGDGC, alt: loc_alt, latitude: LATITUDE, longitude: LONGITUDE });
+    if (loc_results.length === 0) {
+        console.log("No dates in the specified range. Nothing to calculate.");
+        return;
     }
 
-    /**
-     * Run program in interactive mode.
-     */
-    async function RUN_INTERACTIVE() {
-        const GEOMAG = new CL_GEOMAG();
+    const SV_GEOMAG = new CL_GEOMAG();
+    SV_GEOMAG.modelData = par_geomag.modelData;
+    Object.assign(SV_GEOMAG, {
+            model: par_geomag.model, nmodel: par_geomag.nmodel, epoch: par_geomag.epoch,
+            yrmin: par_geomag.yrmin, yrmax: par_geomag.yrmax, altmin: par_geomag.altmin, altmax: par_geomag.altmax,
+            max1: par_geomag.max1, max2: par_geomag.max2, max3: par_geomag.max3, irec_pos: par_geomag.irec_pos
+    });
+    const SV = GET_SECULAR_VARIATION(SV_GEOMAG, { sdate: loc_results[0].sdate, igdgc: loc_igdgc, alt: loc_alt, latitude: loc_lat, longitude: loc_long });
 
-        while(true) { // Outer loop for model selection
-            let loc_mdfile = "";
-            while(true) { // Loop until a valid model is loaded
-                const COF_FILES = fs.readdirSync('.').filter(f => f.toLowerCase().endsWith('.cof'));
-                console.log("\n--- Model File Selection ---");
-                if (COF_FILES.length > 0) {
-                    console.log('Available model files:');
-                    COF_FILES.forEach((f, i) => console.log(`  ${i + 1}) ${f}`));
-                    let loc_file_choice = prompt('Select model file by number or enter filename: ');
-                    if (/^\d+$/.test(loc_file_choice) && parseInt(loc_file_choice) >= 1 && parseInt(loc_file_choice) <= COF_FILES.length) {
-                        loc_mdfile = COF_FILES[parseInt(loc_file_choice) - 1];
-                    } else {
-                        loc_mdfile = loc_file_choice;
-                    }
+    const LOCATION_INFO = { modelName: loc_model_name, latitude: loc_lat, longitude: loc_long, alt: loc_alt };
+    PRINT_NOAA_STYLE_TABLE(loc_results, SV, LOCATION_INFO);
+}
+// --- END: New functions for NOAA-style output ---
+
+/**
+ * Main program execution: process inputs, perform geomagnetic calculations, and output results.
+ */
+async function main() {
+    const ARGS = process.argv.slice(2);
+
+    console.log("\n\nGeomag v7.0 (JavaScript port, v3) - Compatible with WMM and IGRF");
+
+    if (ARGS.length > 0) {
+        await RUN_FROM_ARGS(ARGS);
+        return;
+    }
+
+    await RUN_INTERACTIVE();
+}
+
+/**
+ * Run program from command-line arguments and exit.
+ */
+async function RUN_FROM_ARGS(par_args) {
+    if (par_args.length === 1 && (par_args[0] === 'h' || par_args[0] === '?')) {
+        console.log("\nUsage (command line): node geomag.js model_file date coord alt lat lon");
+        console.log("Example: node geomag.js IGRF14.COF 2023.5 D K10 55.75 37.61");
+        return;
+    }
+    if (par_args.length < 6) {
+        console.log("Error: Not enough arguments provided for command-line execution.");
+        console.log("Usage: node geomag.js model_file date coord alt lat lon");
+        return;
+    }
+
+    const GEOMAG = new CL_GEOMAG();
+    if (!GEOMAG.loadModelFile(par_args[0])) return;
+
+    const DATE_ARG = par_args[1];
+    let loc_s_date;
+    if (DATE_ARG.includes(',')) {
+        const PARTS = DATE_ARG.split(',');
+        loc_s_date = GEOMAG.julday(parseInt(PARTS[1]), parseInt(PARTS[2]), parseInt(PARTS[0]));
+    } else {
+        loc_s_date = parseFloat(DATE_ARG);
+    }
+
+    const IGDGC = par_args[2].toUpperCase() === 'D' ? 1 : 2;
+    const ALTARG = par_args[3];
+    const UNIT_CHAR = ALTARG.charAt(0).toUpperCase();
+    let loc_alt = parseFloat(ALTARG.substring(1));
+    if (UNIT_CHAR === 'M') loc_alt *= 0.001;
+    else if (UNIT_CHAR === 'F') loc_alt /= GL_FT_TO_KM;
+
+    const LATITUDE = parseFloat(par_args[4]);
+    const LONGITUDE = parseFloat(par_args[5]);
+
+    CALCULATE_POINT(GEOMAG, { sdate: loc_s_date, igdgc: IGDGC, alt: loc_alt, latitude: LATITUDE, longitude: LONGITUDE });
+}
+
+/**
+ * Run program in interactive mode.
+ */
+async function RUN_INTERACTIVE() {
+    const GEOMAG = new CL_GEOMAG();
+
+    while(true) { // Outer loop for model selection
+        let loc_mdfile = "";
+        while(true) { // Loop until a valid model is loaded
+            const COF_FILES = fs.readdirSync('.').filter(f => f.toLowerCase().endsWith('.cof'));
+            console.log("\n--- Model File Selection ---");
+            if (COF_FILES.length > 0) {
+                console.log('Available model files:');
+                COF_FILES.forEach((f, i) => console.log(`  ${i + 1}) ${f}`));
+                let loc_file_choice = prompt('Select model file by number or enter filename: ');
+                if (/^\d+$/.test(loc_file_choice) && parseInt(loc_file_choice) >= 1 && parseInt(loc_file_choice) <= COF_FILES.length) {
+                    loc_mdfile = COF_FILES[parseInt(loc_file_choice) - 1];
                 } else {
-                    loc_mdfile = prompt("Enter the model data file name (e.g., IGRF14.COF): ");
+                    loc_mdfile = loc_file_choice;
                 }
-
-                if(GEOMAG.loadModelFile(loc_mdfile)) {
-                    console.log(`Model file "${loc_mdfile}" loaded successfully.`);
-                    break; // Exit model selection loop
-                }
+            } else {
+                loc_mdfile = prompt("Enter the model data file name (e.g., IGRF14.COF): ");
             }
 
-            let loc_stay_in_calc_loop = true;
-            while(loc_stay_in_calc_loop) { // Inner loop for calculations
-                console.log('\n--- Main Menu ---');
-                console.log(`Model: ${GEOMAG.mdfile} (Valid ${GEOMAG.minyr.toFixed(1)}-${GEOMAG.maxyr.toFixed(1)})`);
-                console.log('1) Calculate field at a single point');
-                console.log('2) Calculate field over a range of dates (NOAA format)');
-                console.log('3) Load a different model file');
-                console.log('0) Quit');
-                const CHOICE = prompt('Selection ==> ');
+            if(GEOMAG.loadModelFile(loc_mdfile)) {
+                console.log(`Model file "${loc_mdfile}" loaded successfully.`);
+                break; // Exit model selection loop
+            }
+        }
 
-                switch(CHOICE) {
-                    case '1':
-                        CALC_SINGLE_POINT(GEOMAG);
-                        break;
-                    case '2':
-                        CALCULATE_DATE_RANGE_NOAA(GEOMAG);
-                        break;
-                    case '3':
-                        loc_stay_in_calc_loop = false; // Breaks inner loop to go to outer loop
-                        break;
-                    case '0':
-                        console.log("Exiting program.");
-                        return; // Exit entire function
-                    default:
-                        console.log("Invalid selection, please try again.");
-                        break;
-                }
+        let loc_stay_in_calc_loop = true;
+        while(loc_stay_in_calc_loop) { // Inner loop for calculations
+            console.log('\n--- Main Menu ---');
+            console.log(`Model: ${GEOMAG.mdfile} (Valid ${GEOMAG.minyr.toFixed(1)}-${GEOMAG.maxyr.toFixed(1)})`);
+            console.log('1) Calculate field at a single point');
+            console.log('2) Calculate field over a range of dates (NOAA format)');
+            console.log('3) Load a different model file');
+            console.log('0) Quit');
+            const CHOICE = prompt('Selection ==> ');
+
+            switch(CHOICE) {
+                case '1':
+                    CALC_SINGLE_POINT(GEOMAG);
+                    break;
+                case '2':
+                    CALCULATE_DATE_RANGE_NOAA(GEOMAG);
+                    break;
+                case '3':
+                    loc_stay_in_calc_loop = false; // Breaks inner loop to go to outer loop
+                    break;
+                case '0':
+                    console.log("Exiting program.");
+                    return; // Exit entire function
+                default:
+                    console.log("Invalid selection, please try again.");
+                    break;
             }
         }
     }
+}
 
-    // At the end of the file, expose CL_GEOMAG globally for browser
-    if (typeof window !== 'undefined') {
-        window.CL_GEOMAG = CL_GEOMAG;
-    }
-    // Only run main() in Node.js, not in browser
-    if (typeof window === 'undefined') {
-        main();
-    }
+// At the end of the file, expose CL_GEOMAG globally for browser
+if (typeof window !== 'undefined') {
+    window.CL_GEOMAG = CL_GEOMAG;
+}
+// Only run main() in Node.js, not in browser
+if (typeof window === 'undefined') {
+    main();
+}
 
-    // Export CL_GEOMAG for module usage
-    export { CL_GEOMAG };
+// Export CL_GEOMAG for module usage
+export { CL_GEOMAG };
