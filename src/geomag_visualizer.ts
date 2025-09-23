@@ -756,6 +756,30 @@ const K_MAG_MAP_APP = {
                     }
                 });
 
+                // Remove previous graticule labels before redrawing
+                svg.selectAll('g.graticule-labels').remove();
+                // Redraw graticules and labels at perimeter using updated projection and bounds
+                if (this.projection) {
+                    this.DRAW_GRATICULES(clippedGroup, svg, this.projection, d3.geoPath().projection(this.projection));
+                }
+
+                // Update isolines position when panning/zooming
+                if (this.currentClickPoint && this.currentIsolines) {
+                    const clickPointProjected = proj([this.currentClickPoint.lon, this.currentClickPoint.lat]);
+                    if (clickPointProjected && isFinite(clickPointProjected[0]) && isFinite(clickPointProjected[1])) {
+                        const transformedClickPoint = apply(clickPointProjected as [number, number]);
+                        // Update click marker position using the transformed coordinates
+                        this.currentIsolines.select('circle.click-marker')
+                            .attr('cx', transformedClickPoint[0])
+                            .attr('cy', transformedClickPoint[1]);
+                        // Update isolines label position
+                        this.currentIsolines.select('text.isolines-label')
+                            .attr('x', transformedClickPoint[0] + 10)
+                            .attr('y', transformedClickPoint[1] - 10);
+                        // The isoline paths are automatically updated by the transform on the clipped group
+                    }
+                }
+
                 svg.selectAll<SVGTextElement, unknown>('g.graticule-labels text').each(function() {
                     const node = d3.select(this as SVGTextElement as any);
                     const lon = +node.attr('data-lon');
@@ -864,12 +888,7 @@ const K_MAG_MAP_APP = {
         svg.on("click", (event: MouseEvent) => {
             try {
                 const node = svg.node() as SVGSVGElement;
-                const rect = node.getBoundingClientRect();
-                const [sx, sy] = (d3 as any).pointer(event, node);
-                const scaleX = mapWidth / rect.width;
-                const scaleY = mapHeight / rect.height;
-                const x = sx * scaleX;
-                const y = sy * scaleY;
+                const [x, y] = (d3 as any).pointer(event, node);
                 this.HANDLE_MAP_CLICK(x, y);
             } catch (error) {
                 console.error("Error handling click event:", error);
@@ -941,7 +960,8 @@ const K_MAG_MAP_APP = {
             }
             const coords = proj.invert([localX, localY]);
             if (!coords || coords.some(isNaN)) return;
-            this.currentClickPoint = { x: localX, y: localY, lon: coords[0], lat: coords[1] };
+            // Store both screen coordinates (for marker positioning) and geographic coordinates
+            this.currentClickPoint = { x: par_x, y: par_y, lon: coords[0], lat: coords[1] };
             const fieldData = this.GET_POINT_FIELD(coords);
             if (!fieldData) return;
             this.SHOW_COORD_INFO(par_x, par_y, coords, fieldData);
