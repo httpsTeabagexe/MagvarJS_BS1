@@ -628,7 +628,7 @@ const K_MAG_MAP_APP = {
                 svg.selectAll('path.sphere-border').attr('d', pg as any);
 
                 // update dip-pole markers (support suffix-temporary classes during swap)
-                svg.selectAll(`g.dip-pole${suffix ? suffix : ''}, text.dip-pole${suffix ? suffix : ''}`).each(function(this: any, d: any) {
+                clippedGroup.selectAll(`g[class*="dip-pole"]`).each(function(this: any, d: any) {
                     try {
                         const node = d3.select(this as any);
                         if (!d || typeof d.lon === 'undefined') return;
@@ -748,22 +748,12 @@ const K_MAG_MAP_APP = {
                 const bottomRight = (this.projection as any).invert([(mapWidth - x) / k, (mapHeight - y) / k]);
                 this.currentViewportBounds = { minLon: topLeft[0], maxLon: bottomRight[0], minLat: bottomRight[1], maxLat: topLeft[1] };
                 const t = event.transform as any;
-                const apply = (pt: [number, number]) => [pt[0] * t.k + t.x, pt[1] * t.k + t.y];
                 const proj = this.projection as any;
-                svg.selectAll<SVGGElement, DipPole>('g.dip-pole').each(function(d: DipPole) {
-                    if (!d || typeof d.lon === 'undefined') return;
-                    const p = proj([d.lon, d.lat]);
-                    const node = d3.select(this as SVGGElement as any);
-                    if (!p || !isFinite(p[0]) || !isFinite(p[1])) {
-                        node.attr('transform', null).style('display', 'none');
-                    } else {
-                        const sp = apply(p as [number, number]);
-                        node.style('display', null).attr('transform', `translate(${sp[0]}, ${sp[1]})`);
-                    }
-                });
+                const apply = (pt: [number, number]) => [pt[0] * t.k + t.x, pt[1] * t.k + t.y];
 
-                // Remove previous graticule labels before redrawing
+                // Remove previous graticule labels and paths before redrawing
                 svg.selectAll('g.graticule-labels').remove();
+                clippedGroup.selectAll('.graticule-path').remove();
                 // Redraw graticules and labels at perimeter using updated projection and bounds
                 if (this.projection) {
                     this.DRAW_GRATICULES(clippedGroup, svg, this.projection, d3.geoPath().projection(this.projection));
@@ -856,7 +846,7 @@ const K_MAG_MAP_APP = {
         } catch (_) { /* ignore if getBBox fails */ }
 
         if (dipPoles) {
-            const poleGroups = svg.selectAll(`g.dip-pole${suffix ? suffix : ''}`).data(dipPoles).enter()
+            const poleGroups = clippedGroup.selectAll(`g.dip-pole${suffix ? suffix : ''}`).data(dipPoles).enter()
                 .append("g").attr("class", `dip-pole${suffix ? suffix : ''}`)
                 .style("pointer-events", "none");
 
@@ -864,7 +854,10 @@ const K_MAG_MAP_APP = {
             poleGroups.each(function(this: SVGGElement, d: DipPole, i: number, nodes: SVGGElement[] | ArrayLike<SVGGElement>) {
                 const p = self.projection!([d.lon, d.lat]);
                 const g = d3.select(nodes[i]);
-                if (!p || !isFinite(p[0]) || !isFinite(p[1])) return;
+                if (!p || !isFinite(p[0]) || !isFinite(p[1])) {
+                    g.style("display", "none");
+                    return;
+                }
                 g.attr("transform", `translate(${p[0]}, ${p[1]})`);
                 g.append("text")
                     .attr("x", 0).attr("y", 0).attr("text-anchor", "middle")
@@ -1087,76 +1080,73 @@ const K_MAG_MAP_APP = {
         if (LEVELS.length === 0) return;
 
         const CONTOUR_GROUP = par_container.append("g").attr("class", `contours-manual`);
+        const { width: W, height: H, values: V } = par_grid_data;
+        
         const toGeo = (p: {x: number, y: number}): [number, number] | null => {
-            const lon = (p.x / (par_grid_data.width - 1)) * 360 - 180;
-            const lat = 90 - (p.y / (par_grid_data.height - 1)) * 180;
+            const lon = (p.x / (W - 1)) * 360 - 180;
+            const lat = 90 - (p.y / (H - 1)) * 180;
             return isNaN(lon) || isNaN(lat) ? null : [lon, lat];
         };
 
+        const lonStep = 360 / (W - 1);
+        const latStep = 180 / (H - 1);
+        const bufferedBounds = bounds ? {
+            minLon: bounds.minLon - lonStep, maxLon: bounds.maxLon + lonStep,
+            minLat: bounds.minLat - latStep, maxLat: bounds.maxLat + latStep,
+        } : null;
+
+        const cells: {x: number, y: number, minLon: number, maxLat: number}[] = [];
+        for (let y = 0; y < H - 1; y++) {
+            const latY = 90 - (y / (H - 1)) * 180;
+            for (let x = 0; x < W - 1; x++) {
+                const lonX = (x / (W - 1)) * 360 - 180;
+
+                if (bufferedBounds) {
+                    const lonCrossesAntimeridian = bufferedBounds.minLon > bufferedBounds.maxLon;
+                    let lonOutside = false;
+                    if (lonCrossesAntimeridian) {
+                        if (lonX > bufferedBounds.maxLon && (lonX + lonStep) < bufferedBounds.minLon) lonOutside = true;
+                    } else {
+                        if ((lonX + lonStep) < bufferedBounds.minLon || lonX > bufferedBounds.maxLon) lonOutside = true;
+                    }
+                    if (lonOutside || latY < bufferedBounds.minLat || (latY - latStep) > bufferedBounds.maxLat) continue;
+                }
+                cells.push({x, y, minLon: lonX, maxLat: latY});
+            }
+        }
+
         for (const LEVEL of LEVELS) {
             const lines: [{x:number, y:number}, {x:number, y:number}][] = [];
-            // Add a small buffer to the bounds to catch lines that start just outside the viewport
-            const lonStep = 360 / (par_grid_data.width - 1);
-            const latStep = 180 / (par_grid_data.height - 1);
-            const bufferedBounds = bounds ? {
-                minLon: bounds.minLon - lonStep, maxLon: bounds.maxLon + lonStep,
-                minLat: bounds.minLat - latStep, maxLat: bounds.maxLat + latStep,
-            } : null;
+            for (const cell of cells) {
+                const { x: loc_x, y: loc_y } = cell;
+                const NW_VAL = V[loc_y * W + loc_x];
+                const NE_VAL = V[loc_y * W + loc_x + 1];
+                const SW_VAL = V[(loc_y + 1) * W + loc_x];
+                const SE_VAL = V[(loc_y + 1) * W + loc_x + 1];
+                
+                const TYPE = BIN_TO_TYPE(NW_VAL > LEVEL, NE_VAL > LEVEL, SE_VAL > LEVEL, SW_VAL > LEVEL);
+                if (TYPE === 0 || TYPE === 15) continue;
 
-            for (let loc_y = 0; loc_y < par_grid_data.height - 1; loc_y++) {
-                for (let loc_x = 0; loc_x < par_grid_data.width - 1; loc_x++) {
-                    // --- CULLING LOGIC: Skip rendering cells outside the visible area ---
-                    if (bufferedBounds) {
-                        const cellMinLon = (loc_x / (par_grid_data.width - 1)) * 360 - 180;
-                        const cellMaxLat = 90 - (loc_y / (par_grid_data.height - 1)) * 180;
-                        const cellMaxLon = cellMinLon + lonStep;
-                        const cellMinLat = cellMaxLat - latStep;
+                let loc_a, loc_b, loc_c, loc_d;
+                if (this.isSmoothingEnabled) {
+                    loc_a = { x: loc_x + LERP(LEVEL, NW_VAL, NE_VAL), y: loc_y };
+                    loc_b = { x: loc_x + 1, y: loc_y + LERP(LEVEL, NE_VAL, SE_VAL) };
+                    loc_c = { x: loc_x + LERP(LEVEL, SW_VAL, SE_VAL), y: loc_y + 1 };
+                    loc_d = { x: loc_x, y: loc_y + LERP(LEVEL, NW_VAL, SW_VAL) };
+                } else {
+                    loc_a = { x: loc_x + 0.5, y: loc_y }; loc_b = { x: loc_x + 1, y: loc_y + 0.5 };
+                    loc_c = { x: loc_x + 0.5, y: loc_y + 1 }; loc_d = { x: loc_x, y: loc_y + 0.5 };
+                }
 
-                        const lonCrossesAntimeridian = bufferedBounds.minLon > bufferedBounds.maxLon;
-                        let lonOutside = false;
-                        if (lonCrossesAntimeridian) {
-                            // View crosses antimeridian. Cell is outside if it's in the middle gap.
-                            if (cellMinLon > bufferedBounds.maxLon && cellMaxLon < bufferedBounds.minLon) {
-                                lonOutside = true;
-                            }
-                        } else {
-                            // Normal view. Cell is outside if it's fully to the left or right.
-                            if (cellMaxLon < bufferedBounds.minLon || cellMinLon > bufferedBounds.maxLon) {
-                                lonOutside = true;
-                            }
-                        }
-                        const latOutside = cellMaxLat < bufferedBounds.minLat || cellMinLat > bufferedBounds.maxLat;
-                        if (lonOutside || latOutside) continue; // Skip cell
-                    }
-
-                    const NW_VAL = par_grid_data.values[loc_y * par_grid_data.width + loc_x];
-                    const NE_VAL = par_grid_data.values[loc_y * par_grid_data.width + loc_x + 1];
-                    const SW_VAL = par_grid_data.values[(loc_y + 1) * par_grid_data.width + loc_x];
-                    const SE_VAL = par_grid_data.values[(loc_y + 1) * par_grid_data.width + loc_x + 1];
-                    const TYPE = BIN_TO_TYPE(NW_VAL > LEVEL, NE_VAL > LEVEL, SE_VAL > LEVEL, SW_VAL > LEVEL);
-                    if (TYPE === 0 || TYPE === 15) continue;
-
-                    let loc_a, loc_b, loc_c, loc_d;
-                    if (this.isSmoothingEnabled) {
-                        loc_a = { x: loc_x + LERP(LEVEL, NW_VAL, NE_VAL), y: loc_y };
-                        loc_b = { x: loc_x + 1, y: loc_y + LERP(LEVEL, NE_VAL, SE_VAL) };
-                        loc_c = { x: loc_x + LERP(LEVEL, SW_VAL, SE_VAL), y: loc_y + 1 };
-                        loc_d = { x: loc_x, y: loc_y + LERP(LEVEL, NW_VAL, SW_VAL) };
-                    } else {
-                        loc_a = { x: loc_x + 0.5, y: loc_y }; loc_b = { x: loc_x + 1, y: loc_y + 0.5 };
-                        loc_c = { x: loc_x + 0.5, y: loc_y + 1 }; loc_d = { x: loc_x, y: loc_y + 0.5 };
-                    }
-
-                    switch (TYPE) {
-                        case 1: case 14: lines.push([loc_d, loc_c]); break;
-                        case 2: case 13: lines.push([loc_c, loc_b]); break;
-                        case 3: case 12: lines.push([loc_d, loc_b]); break;
-                        case 4: case 11: lines.push([loc_a, loc_b]); break;
-                        case 5: lines.push([loc_d, loc_a]); lines.push([loc_c, loc_b]); break;
-                        case 6: case 9:  lines.push([loc_a, loc_c]); break;
-                        case 7: case 8:  lines.push([loc_d, loc_a]); break;
-                        case 10: lines.push([loc_a, loc_d]); lines.push([loc_b, loc_c]); break;
-                    }
+                switch (TYPE) {
+                    case 1: case 14: lines.push([loc_d, loc_c]); break;
+                    case 2: case 13: lines.push([loc_c, loc_b]); break;
+                    case 3: case 12: lines.push([loc_d, loc_b]); break;
+                    case 4: case 11: lines.push([loc_a, loc_b]); break;
+                    case 5: lines.push([loc_d, loc_a]); lines.push([loc_c, loc_b]); break;
+                    case 6: case 9:  lines.push([loc_a, loc_c]); break;
+                    case 7: case 8:  lines.push([loc_d, loc_a]); break;
+                    case 10: lines.push([loc_a, loc_d]); lines.push([loc_b, loc_c]); break;
                 }
             }
             if (lines.length > 0) {
@@ -1409,11 +1399,13 @@ const K_MAG_MAP_APP = {
 
         par_clipped_container.append("path")
             .datum(graticule.step([15, 15]))
+            .attr("class", "graticule-path")
             .attr("d", par_path_generator)
             .style("fill", "none").style("stroke", "#ccc").style("stroke-width", 0.5).style("stroke-dasharray", "2,2");
 
         par_clipped_container.append("path")
             .datum(graticule.step([30, 30]))
+            .attr("class", "graticule-path")
             .attr("d", par_path_generator)
             .style("fill", "none").style("stroke", "#aaa").style("stroke-width", 0.7);
 
@@ -1522,17 +1514,6 @@ const K_MAG_MAP_APP = {
         this.DRAW_ISOLINES_FROM_POINT(coords, fieldData);
     },
 
-    HANDLE_SEARCH_VALUE: function(): void {
-        const sel = document.getElementById('searchQuantity') as HTMLSelectElement | null;
-        const valEl = document.getElementById('searchValue') as HTMLInputElement | null;
-        if (!sel || !valEl) return;
-        const mapped = this.QUANTITY_TO_PARAM(sel.value);
-        const rawValue = parseFloat(valEl.value);
-        if (!mapped || !isFinite(rawValue)) { this.UPD_STATUS('Pick a quantity and enter a numeric target value.', true); return; }
-        if (!this.projection || !this.geomagInstance) { this.UPD_STATUS('Please render a map first.', true); return; }
-        this.DRAW_VALUE_ISOLINE(mapped.key, rawValue, mapped.name, mapped.units);
-    },
-
     DRAW_VALUE_ISOLINE: function(paramKey: ParamKey, value: number, nameForLabel: string, units: string): void {
         const container = d3.select<SVGGElement, unknown>('#geomag-map-clipped-group');
         if (container.empty()) { this.UPD_STATUS('Please render a map first.', true); return; }
@@ -1578,6 +1559,17 @@ const K_MAG_MAP_APP = {
 
         const fieldData = this.GET_POINT_FIELD([pickLon, pickLat]);
         if (fieldData) this.SHOW_COORD_INFO(pt.x, pt.y, [pickLon, pickLat], fieldData);
+    },
+
+    HANDLE_SEARCH_VALUE: function(): void {
+        const sel = document.getElementById('searchQuantity') as HTMLSelectElement | null;
+        const valEl = document.getElementById('searchValue') as HTMLInputElement | null;
+        if (!sel || !valEl) return;
+        const mapped = this.QUANTITY_TO_PARAM(sel.value);
+        const rawValue = parseFloat(valEl.value);
+        if (!mapped || !isFinite(rawValue)) { this.UPD_STATUS('Pick a quantity and enter a numeric target value.', true); return; }
+        if (!this.projection || !this.geomagInstance) { this.UPD_STATUS('Please render a map first.', true); return; }
+        this.DRAW_VALUE_ISOLINE(mapped.key, rawValue, mapped.name, mapped.units);
     },
 };
 
