@@ -1174,30 +1174,32 @@ const K_MAG_MAP_APP = {
 
     DRAW_BLACKOUT_ZONES: function(container: d3.Selection<SVGGElement, unknown, HTMLElement, any>, pathGenerator: d3.GeoPath, paddedGridData: GridData): void {
         const ZONES = [
-            { threshold: 2000, color: "rgba(255, 0, 0, 0.5)", cls: "unreliable-zone" },
-            { threshold: 6000, color: "rgba(255,165,0,0.4)", cls: "caution-zone" }
+            { threshold: 6000, color: "rgba(255, 165, 0, 0.4)", cls: "caution-zone" },
+            { threshold: 2000, color: "rgba(255, 0, 0, 0.5)", cls: "unreliable-zone" }
         ];
         const { values: paddedValues, width: paddedWidth, height: paddedHeight } = paddedGridData;
         const ORIGINAL_WIDTH = paddedWidth - 2;
         const ORIGINAL_HEIGHT = paddedHeight - 2;
 
-        const GEO_TRANSFORM = (par_geometry: any): any => {
-            const TRANSFORM_POINT = (point: [number, number]): [number, number] => {
-                const lon = ((point[0] - 1) / (ORIGINAL_WIDTH - 1)) * 360 - 180;
-                const lat = 90 - ((point[1] - 1) / (ORIGINAL_HEIGHT - 1)) * 180;
-                return [lon, lat];
-            };
-            const newCoordinates = par_geometry.coordinates.map((polygon: any) =>
-                polygon.map((ring: any) => ring.map(TRANSFORM_POINT))
-            );
-            return { type: "MultiPolygon", coordinates: newCoordinates, value: par_geometry.value };
-        };
-
-        ZONES.forEach(zone => {
-            const g = container.append("g").attr("class", zone.cls);
-            const contours = d3.contours().size([paddedWidth, paddedHeight]).thresholds([zone.threshold]);
-            const geometries = contours(Array.from(paddedValues)).map(GEO_TRANSFORM);
-            g.selectAll("path")
+                const GEO_TRANSFORM = (par_geometry: any): any => {
+                    const TRANSFORM_POINT = (point: [number, number]): [number, number] => {
+                        const lon = ((point[0] - 1) / (ORIGINAL_WIDTH - 1)) * 360 - 180;
+                        const lat = 90 - ((point[1] - 1) / (ORIGINAL_HEIGHT - 1)) * 180;
+                        return [lon, lat];
+                    };
+                    const newCoordinates = par_geometry.coordinates.map((polygon: any) =>
+                        polygon.map((ring: any) => ring.map(TRANSFORM_POINT).reverse())
+                    );
+                    return { type: "MultiPolygon", coordinates: newCoordinates, value: par_geometry.value };
+                };
+        
+                const negatedValues = new Float32Array(paddedValues.length);
+                for (let i = 0; i < paddedValues.length; i++) negatedValues[i] = -paddedValues[i];
+        
+                ZONES.forEach(zone => {
+                    const g = container.append("g").attr("class", zone.cls);
+                    const contours = d3.contours().size([paddedWidth, paddedHeight]).thresholds([-zone.threshold]);
+                    const geometries = (contours(negatedValues as any) as any).map(GEO_TRANSFORM);            g.selectAll("path")
                 .data(geometries)
                 .enter()
                 .append("path")
@@ -1336,19 +1338,21 @@ const K_MAG_MAP_APP = {
         const latAbsArr = d3.range(0, 180, 180 / (height - 1)).concat(180);
         const lonAbsArr = d3.range(0, 360, 360 / (width - 1)).concat(360);
 
+        const pointGeomag = new CL_GEOMAG();
+        pointGeomag.modelData = geomagInstance.modelData;
+        Object.assign(pointGeomag, {
+            model: geomagInstance.model.slice(), nmodel: geomagInstance.nmodel,
+            epoch: geomagInstance.epoch.slice(), yrmin: geomagInstance.yrmin.slice(), yrmax: geomagInstance.yrmax.slice(),
+            altmin: geomagInstance.altmin.slice(), altmax: geomagInstance.altmax.slice(),
+            max1: geomagInstance.max1.slice(), max2: geomagInstance.max2.slice(), max3: geomagInstance.max3.slice(),
+            irec_pos: geomagInstance.irec_pos.slice()
+        });
+
         for (let loc_i = 0; loc_i < height; loc_i++) {
+            const lat = 90 - latAbsArr[loc_i];
             for ( let loc_j = 0; loc_j < width; loc_j++) {
-                let loc_lat = 90 - latAbsArr[loc_i]; let lon = lonAbsArr[loc_j] - 180;
-                const pointGeomag = new CL_GEOMAG();
-                pointGeomag.modelData = geomagInstance.modelData;
-                Object.assign(pointGeomag, {
-                    model: geomagInstance.model.slice(), nmodel: geomagInstance.nmodel,
-                    epoch: geomagInstance.epoch.slice(), yrmin: geomagInstance.yrmin.slice(), yrmax: geomagInstance.yrmax.slice(),
-                    altmin: geomagInstance.altmin.slice(), altmax: geomagInstance.altmax.slice(),
-                    max1: geomagInstance.max1.slice(), max2: geomagInstance.max2.slice(), max3: geomagInstance.max3.slice(),
-                    irec_pos: geomagInstance.irec_pos.slice()
-                });
-                const field = pointGeomag.getFieldComponents(epoch, igdgc, altitudeKm, loc_lat, lon);
+                const lon = lonAbsArr[loc_j] - 180;
+                const field = pointGeomag.getFieldComponents(epoch, igdgc, altitudeKm, lat, lon);
                 let loc_value = field[par_param_key];
                 if (isNaN(loc_value)) loc_value = loc_j > 0 ? values[loc_i * width + (loc_j - 1)] : 0;
                 values[loc_i * width + loc_j] = loc_value;
