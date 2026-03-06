@@ -759,23 +759,6 @@ const K_MAG_MAP_APP = {
                     this.DRAW_GRATICULES(clippedGroup, svg, this.projection, d3.geoPath().projection(this.projection));
                 }
 
-                // Update isolines position when panning/zooming
-                if (this.currentClickPoint && this.currentIsolines) {
-                    const clickPointProjected = proj([this.currentClickPoint.lon, this.currentClickPoint.lat]);
-                    if (clickPointProjected && isFinite(clickPointProjected[0]) && isFinite(clickPointProjected[1])) {
-                        const transformedClickPoint = apply(clickPointProjected as [number, number]);
-                        // Update click marker position using the transformed coordinates
-                        this.currentIsolines.select('circle.click-marker')
-                            .attr('cx', transformedClickPoint[0])
-                            .attr('cy', transformedClickPoint[1]);
-                        // Update isolines label position
-                        this.currentIsolines.select('text.isolines-label')
-                            .attr('x', transformedClickPoint[0] + 10)
-                            .attr('y', transformedClickPoint[1] - 10);
-                        // The isoline paths are automatically updated by the transform on the clipped group
-                    }
-                }
-
                 svg.selectAll<SVGTextElement, unknown>('g.graticule-labels text').each(function() {
                     const node = d3.select(this as SVGTextElement as any);
                     const lon = +node.attr('data-lon');
@@ -959,8 +942,8 @@ const K_MAG_MAP_APP = {
             }
             const coords = proj.invert([localX, localY]);
             if (!coords || coords.some(isNaN)) return;
-            // Store both screen coordinates (for marker positioning) and geographic coordinates
-            this.currentClickPoint = { x: par_x, y: par_y, lon: coords[0], lat: coords[1] };
+            // Store local coordinates (for pinned marker positioning) and geographic coordinates
+            this.currentClickPoint = { x: localX, y: localY, lon: coords[0], lat: coords[1] };
             const fieldData = this.GET_POINT_FIELD(coords);
             if (!fieldData) return;
             this.SHOW_COORD_INFO(par_x, par_y, coords, fieldData);
@@ -1504,13 +1487,13 @@ const K_MAG_MAP_APP = {
             return;
         }
         if (!this.projection) { this.UPD_STATUS('Please render a map first.', true); return; }
-        const pt = this.LONLAT_TO_SVG_POINT(lon, lat);
-        if (!pt) { this.UPD_STATUS('Point is not visible in current projection.', true); return; }
+        const p = (this.projection as any)([lon, lat]);
+        if (!p || !isFinite(p[0]) || !isFinite(p[1])) { this.UPD_STATUS('Point is not visible in current projection.', true); return; }
         const coords: [number, number] = [lon, lat];
         const fieldData = this.GET_POINT_FIELD(coords);
         if (!fieldData) return;
-        this.currentClickPoint = { x: pt.x, y: pt.y, lon, lat };
-        this.SHOW_COORD_INFO(pt.x, pt.y, coords, fieldData);
+        this.currentClickPoint = { x: p[0], y: p[1], lon, lat };
+        this.SHOW_COORD_INFO(p[0], p[1], coords, fieldData);
         this.DRAW_ISOLINES_FROM_POINT(coords, fieldData);
     },
 
@@ -1540,8 +1523,8 @@ const K_MAG_MAP_APP = {
             const seg = (isoGeo as any).coordinates && (isoGeo as any).coordinates[0];
             if (seg && seg.length >= 2) { pickLon = (seg[0][0] + seg[1][0]) / 2; pickLat = (seg[0][1] + seg[1][1]) / 2; }
         } catch (_) {}
-        const pt = this.LONLAT_TO_SVG_POINT(pickLon, pickLat);
-        if (!pt) { this.UPD_STATUS('Isoline is outside the visible area.', true); return; }
+        const p = (this.projection as any)([pickLon, pickLat]);
+        if (!p || !isFinite(p[0]) || !isFinite(p[1])) { this.UPD_STATUS('Isoline is outside the visible area.', true); return; }
 
         const pathGenerator = d3.geoPath().projection(this.projection as any);
         this.currentIsolines = container.append('g').attr('class', 'isolines-group');
@@ -1553,12 +1536,12 @@ const K_MAG_MAP_APP = {
             .style('stroke', this.VALUE_COLOR(paramKey, value))
             .style('stroke-width', 2)
             .style('stroke-dasharray', '4,3');
-        this.currentClickPoint = { x: pt.x, y: pt.y, lon: pickLon, lat: pickLat };
-        this.currentIsolines.append('circle').attr('class', 'click-marker').attr('cx', pt.x).attr('cy', pt.y).attr('r', 4).attr('fill', '#ff3333').attr('stroke', 'white').attr('stroke-width', 1);
-        this.currentIsolines.append('text').attr('x', pt.x + 10).attr('y', pt.y - 10).attr('class', 'isolines-label').style('font-size', '11px').style('font-family', 'Arial, sans-serif').style('fill', '#111').text(`${nameForLabel} = ${value}${units ? ' ' + units : ''}`);
+        this.currentClickPoint = { x: p[0], y: p[1], lon: pickLon, lat: pickLat };
+        this.currentIsolines.append('circle').attr('class', 'click-marker').attr('cx', p[0]).attr('cy', p[1]).attr('r', 4).attr('fill', '#ff3333').attr('stroke', 'white').attr('stroke-width', 1);
+        this.currentIsolines.append('text').attr('x', p[0] + 10).attr('y', p[1] - 10).attr('class', 'isolines-label').style('font-size', '11px').style('font-family', 'Arial, sans-serif').style('fill', '#111').text(`${nameForLabel} = ${value}${units ? ' ' + units : ''}`);
 
         const fieldData = this.GET_POINT_FIELD([pickLon, pickLat]);
-        if (fieldData) this.SHOW_COORD_INFO(pt.x, pt.y, [pickLon, pickLat], fieldData);
+        if (fieldData) this.SHOW_COORD_INFO(p[0], p[1], [pickLon, pickLat], fieldData);
     },
 
     HANDLE_SEARCH_VALUE: function(): void {
