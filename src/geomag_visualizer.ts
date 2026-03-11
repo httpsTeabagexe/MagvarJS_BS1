@@ -1,5 +1,13 @@
 // geomag_visualizer.ts
 
+// These constants are injected by scripts/bundle-offline.js at build time.
+// In the normal dev/server workflow they are undefined and the app falls back
+// to fetch() as usual.  In the offline bundle they hold the embedded data so
+// the app works with no network requests and no HTTP server (file:// mode).
+declare const __OFFLINE_COF__: string | undefined;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+declare const __OFFLINE_WORLD__: any | undefined;
+
 type Topology = any; // eslint-disable-line @typescript-eslint/no-explicit-any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type FeatureCollection = any; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -343,9 +351,14 @@ const K_MAG_MAP_APP = {
         try {
             if (!this.cofFileContentCache) {
                 this.UPD_STATUS(this.T('status_fetching'));
-                const response = await fetch(this.config.cofURL);
-                if (!response.ok) throw new Error(`Could not load ${this.config.cofURL}. Check file path and server. (Error: ${response.status})`);
-                this.cofFileContentCache = await response.text();
+                if (typeof __OFFLINE_COF__ !== 'undefined') {
+                    // Offline bundle: data was embedded at build time – no fetch needed
+                    this.cofFileContentCache = __OFFLINE_COF__;
+                } else {
+                    const response = await fetch(this.config.cofURL);
+                    if (!response.ok) throw new Error(`Could not load ${this.config.cofURL}. Check file path and server. (Error: ${response.status})`);
+                    this.cofFileContentCache = await response.text();
+                }
             }
             this.UPD_STATUS(this.T('status_loading'));
             if (!this.LOAD_MODEL_INTO_INSTANCE(this.geomagInstance, this.cofFileContentCache)) {
@@ -644,7 +657,10 @@ const K_MAG_MAP_APP = {
 
     RENDER_GEOMAG_MAP: async function (par_svg_id: string, par_geomag_instance: CL_GEOMAG, par_current_epoch: number, par_current_alt: number, par_field: FieldType): Promise<void> {
         this.UPD_STATUS(this.T('status_fetching'), false);
-        const WORLD = await d3.json<Topology>(this.config.worldAtlasURL);
+        // Offline bundle: world atlas was embedded at build time – no fetch needed
+        const WORLD: Topology = (typeof __OFFLINE_WORLD__ !== 'undefined')
+            ? __OFFLINE_WORLD__
+            : await d3.json<Topology>(this.config.worldAtlasURL);
         if (!WORLD || !WORLD.objects) {
             this.UPD_STATUS("Error: Invalid world atlas data.", true);
             return;

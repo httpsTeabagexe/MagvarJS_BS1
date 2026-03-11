@@ -17,7 +17,9 @@
     "build": "tsc",
     "postbuild": "node scripts/copy-static.js",
     "start": "npm run build && npx serve public",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "bundle:offline": "node scripts/bundle-offline.js",
+    "portable": "npm run bundle:offline && powershell -Command \"Compress-Archive -Path public\\* -DestinationPath portable.zip -Force\""
   },
   "repository": {
     "type": "git",
@@ -34,6 +36,7 @@
   "devDependencies": {
     "@types/d3": "^7.4.3",
     "@types/leaflet": "^1.9.21",
-    "@types/topojson-client": "^3.1.5"
+    "@types/topojson-client": "^3.1.5",
+    "esbuild": "^0.27.3"
   }
 }
