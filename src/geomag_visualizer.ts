@@ -64,6 +64,13 @@ interface CommonArgs {
     altitudeKm: number;
 }
 
+interface Airport {
+    name: string;
+    city: string;
+    lat: number;
+    lon: number;
+}
+
 // --- Marching Squares Helper Functions ---
 function LERP(threshold: number, p1_val: number, p2_val: number): number {
     if (p2_val - p1_val === 0) return 0.5;
@@ -96,6 +103,7 @@ const K_MAG_MAP_APP = {
     cofFileContentCache: null as string | null,
     isSmoothingEnabled: true,
     isUncertaintyVisible: false,
+    isolineWidth: 1.5,
     theme: 'dark' as 'dark' | 'light',
     lang: 'en' as 'en' | 'ru',
 
@@ -119,7 +127,8 @@ const K_MAG_MAP_APP = {
             error_outside: "Isoline is outside the visible area.",
             search_invalid_coord: "Enter valid latitude (−90..90) and longitude (−180..180).",
             point_not_visible: "Point is not visible in current projection.",
-            btn_render: "Render", btn_smoothing: "Smoothing", btn_uncertainty: "Uncertainty"
+            btn_render: "Render", btn_smoothing: "Smoothing", btn_uncertainty: "Uncertainty",
+            isoline_width: "Isoline Width"
         },
         ru: {
             proj: "Проекция", theme: "Тема", lang: "Язык",
@@ -139,7 +148,8 @@ const K_MAG_MAP_APP = {
             error_outside: "Изолиния вне видимой области.",
             search_invalid_coord: "Введите широту (−90..90) и долготу (−180..180).",
             point_not_visible: "Точка не видна в текущей проекции.",
-            btn_render: "Построить", btn_smoothing: "Сглаживание", btn_uncertainty: "Погрешность"
+            btn_render: "Построить", btn_smoothing: "Сглаживание", btn_uncertainty: "Погрешность",
+            isoline_width: "Толщина линий"
         }
     },
 
@@ -242,6 +252,8 @@ const K_MAG_MAP_APP = {
         const langSelect = document.getElementById('langSelect') as HTMLSelectElement | null;
         const themeToggleButton = document.getElementById('themeToggleButton') as HTMLButtonElement | null;
         const langToggleButton = document.getElementById('langToggleButton') as HTMLButtonElement | null;
+        const isolineWidthInput = document.getElementById('isolineWidthInput') as HTMLInputElement | null;
+        const isolineWidthLabel = document.getElementById('isolineWidthLabel') as HTMLLabelElement | null;
 
         // Update static button labels from translations
         const updateTogglesLabels = () => {
@@ -250,11 +262,28 @@ const K_MAG_MAP_APP = {
             if (uncertaintyButton) uncertaintyButton.textContent = this.T('btn_uncertainty');
             if (themeToggleButton) themeToggleButton.textContent = `${this.T('theme')}: ${this.T(this.theme)}`;
             if (langToggleButton) langToggleButton.textContent = `${this.T('lang')}: ${this.lang.toUpperCase()}`;
+            if (isolineWidthLabel) isolineWidthLabel.textContent = `${this.T('isoline_width')}: ${this.isolineWidth}px`;
             // Update body class for potential CSS-only theme logic
             document.body.className = `theme-${this.theme} lang-${this.lang}`;
         };
 
         updateTogglesLabels();
+
+        if (isolineWidthInput) {
+            isolineWidthInput.value = String(this.isolineWidth);
+            isolineWidthInput.addEventListener('input', () => {
+                this.isolineWidth = parseFloat(isolineWidthInput.value);
+                updateTogglesLabels();
+                // Dynamic update of existing isolines without full re-render
+                d3.selectAll('.isolines, .contours-manual path').style('stroke-width', () => {
+                    // This is a bit complex because some are major lines.
+                    // For simplicity, we'll just trigger a REDRAW_CONTOURS.
+                    return '';
+                });
+                if (this.redrawTimeout) clearTimeout(this.redrawTimeout);
+                this.redrawTimeout = window.setTimeout(() => this.REDRAW_CONTOURS(), 100);
+            });
+        }
 
         renderButton.addEventListener('click', () => this.HANDLE_RENDER_CLICK());
 
@@ -699,7 +728,7 @@ const K_MAG_MAP_APP = {
             return;
         }
 
-        const LAND = topojson.feature(WORLD, (WORLD.objects as any).countries as any) as unknown as FeatureCollection;
+        const LAND = topojson.merge(WORLD, (WORLD.objects as any).countries.geometries) as any;
         const SPHERE = {type: "Sphere" as const};
         const DIP_POLES = await this.CALCULATE_DIP_POLES();
         const COMMON_ARGS: CommonArgs = {
@@ -746,19 +775,62 @@ const K_MAG_MAP_APP = {
         this.SWAP_OVERLAYS(par_svg_id, suffix);
     },
 
+    AIRPORTS: [
+        { name: "UUEE", city: "Moscow", lat: 55.972, lon: 37.414 },
+        { name: "UUDD", city: "Moscow", lat: 55.408, lon: 37.906 },
+        { name: "UUWW", city: "Moscow", lat: 55.591, lon: 37.261 },
+        { name: "KJFK", city: "New York", lat: 40.641, lon: -73.778 },
+        { name: "EGLL", city: "London", lat: 51.470, lon: -0.454 },
+        { name: "LFPG", city: "Paris", lat: 49.009, lon: 2.547 },
+        { name: "RJTT", city: "Tokyo", lat: 35.549, lon: 139.779 },
+        { name: "OMDB", city: "Dubai", lat: 25.253, lon: 55.364 },
+        { name: "WSSS", city: "Singapore", lat: 1.364, lon: 103.991 },
+        { name: "YSSY", city: "Sydney", lat: -33.946, lon: 151.177 },
+        { name: "KLAX", city: "Los Angeles", lat: 33.941, lon: -118.408 },
+        { name: "SBGR", city: "Sao Paulo", lat: -23.435, lon: -46.473 },
+        { name: "FAOR", city: "Johannesburg", lat: -26.139, lon: 28.246 },
+        { name: "EDDF", city: "Frankfurt", lat: 50.037, lon: 8.562 },
+        { name: "VHHH", city: "Hong Kong", lat: 22.308, lon: 113.918 }
+    ],
+
     REDRAW_CONTOURS: function (): void {
         const svg = d3.select("#geomag-map");
         const clippedGroup = svg.select<SVGGElement>("#geomag-map-clipped-group");
-        if (clippedGroup.empty() || !this.lastGridData || !this.projection) return;
-
-        // Clear existing contours
-        clippedGroup.selectAll(".contours-manual").remove();
+        if (clippedGroup.empty() || !this.lastParamKey || !this.projection || !this.geomagInstance) return;
 
         const fieldSelect = document.getElementById('fieldSelect') as HTMLSelectElement;
         const epochInput = document.getElementById('epochInput') as HTMLInputElement;
+        const altitudeInput = document.getElementById('altitudeInput') as HTMLInputElement;
+        
         const field = fieldSelect.value as FieldType;
         const currentEpoch = parseFloat(epochInput.value);
+        const currentAltitude = parseFloat(altitudeInput.value);
         const zoomLevel = this.currentZoomTransform ? this.currentZoomTransform.k : 1;
+
+        const common: CommonArgs = {
+            geomagInstance: this.geomagInstance,
+            epoch: currentEpoch,
+            altitudeKm: currentAltitude
+        };
+
+        let gridToUse = this.lastGridData;
+        
+        // Better LOD: If zoomed in significantly and in Mercator, generate a high-res viewport-specific grid
+        if (this.projectionType === 'mercator' && zoomLevel > 2 && this.currentViewportBounds) {
+            this.UPD_STATUS(this.T('status_calculating_grid') + " (LOD)...");
+            // Target roughly 100x100 grid for the visible viewport
+            gridToUse = this.GENERATE_GRID_DATA(common, this.lastParamKey, this.currentViewportBounds, { lat: 100, lon: 100 });
+            if (this.isSmoothingEnabled) this.APPLY_GAUSSIAN_BLUR(gridToUse.values, gridToUse.width, gridToUse.height, 1.2);
+            this.UPD_STATUS(this.T('status_drawing') + " (LOD)...");
+        } else {
+            // Revert to global grid for low zoom or non-mercator
+            gridToUse = this.lastGridData;
+        }
+
+        if (!gridToUse) return;
+
+        // Clear existing contours
+        clippedGroup.selectAll(".contours-manual").remove();
 
         const FIELD_CONFIG = this.GET_FIELD_CONFIG(field, currentEpoch, zoomLevel);
         const pathGenerator = d3.geoPath().projection(this.projection as any);
@@ -766,9 +838,19 @@ const K_MAG_MAP_APP = {
         const PASSES = [FIELD_CONFIG.positiveOptions, FIELD_CONFIG.negativeOptions, FIELD_CONFIG.zeroOptions];
         for (const options of PASSES) {
             if (options.step > 0 && options.domain[0] <= options.domain[1]) {
-                this.DRAW_CONTOUR_LAYER(clippedGroup, pathGenerator, this.lastGridData, options, this.currentViewportBounds);
+                this.DRAW_CONTOUR_LAYER(clippedGroup, pathGenerator, gridToUse, options, this.currentViewportBounds);
             }
         }
+
+        // Re-draw active click isoline with LOD grid
+        if (this.currentClickPoint) {
+            const fieldData = this.GET_POINT_FIELD([this.currentClickPoint.lon, this.currentClickPoint.lat]);
+            if (fieldData) {
+                this.DRAW_ISOLINES_FROM_POINT([this.currentClickPoint.lon, this.currentClickPoint.lat], fieldData, gridToUse);
+            }
+        }
+        
+        this.UPD_STATUS(this.T('status_rendered'));
     },
 
 
@@ -845,6 +927,16 @@ const K_MAG_MAP_APP = {
 
         this.DRAW_GRATICULES(clippedGroup, svg, this.projection as d3.GeoProjection, pathGenerator);
 
+        // Group for markers and labels that should stay fixed visual size (projected on every zoom/pan)
+        svg.selectAll("g.isoline-marker-group").remove();
+        const markerGroup = svg.append("g").attr("class", "isoline-marker-group")
+            .style("pointer-events", "none");
+
+        // Group for airports (projected)
+        svg.selectAll("g.airports-group").remove();
+        const airportsGroup = svg.append("g").attr("class", "airports-group")
+            .style("pointer-events", "none");
+
         // Draw land as a single path from the FeatureCollection
         clippedGroup.append("path")
             .datum(par_land_features)
@@ -852,6 +944,45 @@ const K_MAG_MAP_APP = {
             .style("fill", landFill)
             .style("stroke", landStroke)
             .style("stroke-width", 0.5);
+
+        // Add airport area circles to separate group (outside clipped for easier control)
+        svg.selectAll("g.airports-area-group").remove();
+        const airportAreaGroup = svg.append("g").attr("class", "airports-area-group")
+            .style("pointer-events", "none");
+        airportAreaGroup.selectAll("circle.airport-area")
+            .data(this.AIRPORTS)
+            .enter()
+            .append("circle")
+            .attr("class", "airport-area")
+            .attr("data-lon", d => d.lon)
+            .attr("data-lat", d => d.lat)
+            .attr("cx", d => (this.projection as any)([d.lon, d.lat])?.[0] || 0)
+            .attr("cy", d => (this.projection as any)([d.lon, d.lat])?.[1] || 0)
+            .attr("r", 0.5) // Small geographic radius
+            .style("fill", "rgba(0, 255, 255, 0.15)")
+            .style("stroke", "rgba(0, 255, 255, 0.4)")
+            .style("stroke-width", 0.1);
+
+        // Add projected airport dots and labels
+        this.AIRPORTS.forEach(ap => {
+            const p = (this.projection as any)([ap.lon, ap.lat]);
+            if (p) {
+                airportsGroup.append("circle")
+                    .attr("class", "airport-dot")
+                    .attr("data-lon", ap.lon).attr("data-lat", ap.lat)
+                    .attr("cx", p[0]).attr("cy", p[1]).attr("r", 3)
+                    .attr("fill", "#00ffff").attr("stroke", isDark ? "#000" : "#fff").attr("stroke-width", 1);
+                
+                airportsGroup.append("text")
+                    .attr("class", "airport-label")
+                    .attr("data-lon", ap.lon).attr("data-lat", ap.lat)
+                    .attr("x", p[0] + 5).attr("y", p[1] - 5)
+                    .style("font-size", "10px").style("font-family", "Arial, sans-serif")
+                    .style("fill", "#00ffff")
+                    .style("paint-order", "stroke").style("stroke", isDark ? "#000" : "white").style("stroke-width", "2px")
+                    .text(ap.name);
+            }
+        });
 
         if (projChoice === 'globe') {
             // remove previous drag/zoom handlers to avoid duplicates
@@ -906,18 +1037,61 @@ const K_MAG_MAP_APP = {
                     }
                 });
 
+                // update airport dots and labels on globe rotation
+                svg.selectAll('g.airports-group circle.airport-dot').each(function() {
+                    const node = d3.select(this as any);
+                    const lon = +node.attr('data-lon');
+                    const lat = +node.attr('data-lat');
+                    if (!isFinite(lon) || !isFinite(lat)) return;
+                    const p = (K_MAG_MAP_APP.projection as any)([lon, lat]);
+                    if (!p || !isFinite(p[0]) || !isFinite(p[1])) {
+                        node.style('display', 'none');
+                    } else {
+                        node.style('display', null).attr('cx', p[0]).attr('cy', p[1]);
+                    }
+                });
+                svg.selectAll('g.airports-group text.airport-label').each(function() {
+                    const node = d3.select(this as any);
+                    const lon = +node.attr('data-lon');
+                    const lat = +node.attr('data-lat');
+                    if (!isFinite(lon) || !isFinite(lat)) return;
+                    const p = (K_MAG_MAP_APP.projection as any)([lon, lat]);
+                    if (!p || !isFinite(p[0]) || !isFinite(p[1])) {
+                        node.style('display', 'none');
+                    } else {
+                        node.style('display', null).attr('x', p[0] + 5).attr('y', p[1] - 5);
+                    }
+                });
+
+                // update airport area circles on globe rotation
+                svg.selectAll('g.airports-area-group circle.airport-area').each(function() {
+                    const node = d3.select(this as any);
+                    const lon = +node.attr('data-lon');
+                    const lat = +node.attr('data-lat');
+                    if (!isFinite(lon) || !isFinite(lat)) return;
+                    const p = (K_MAG_MAP_APP.projection as any)([lon, lat]);
+                    if (!p || !isFinite(p[0]) || !isFinite(p[1])) {
+                        node.style('display', 'none');
+                    } else {
+                        node.style('display', null).attr('cx', p[0]).attr('cy', p[1]);
+                    }
+                });
+
                 // update selected-point marker (if any) to follow rotation
                 try {
                     const cp = K_MAG_MAP_APP.currentClickPoint;
                     if (cp) {
                         const p = (K_MAG_MAP_APP.projection as any)([cp.lon, cp.lat]);
-                        const g = svg.select('g.isolines-group');
-                        if (!p || !isFinite(p[0]) || !isFinite(p[1]) || g.empty()) {
-                            g.style('display', 'none');
+                        if (!p || !isFinite(p[0]) || !isFinite(p[1])) {
+                            // Hide markers if point is not visible
+                            svg.selectAll('g.isoline-marker-group circle.click-marker').style('display', 'none');
+                            svg.selectAll('g.isoline-marker-group text.isolines-label').style('display', 'none');
+                            svg.select('g.isolines-group').style('display', 'none');
                         } else {
-                            g.style('display', null);
-                            g.select('circle.click-marker').attr('cx', p[0]).attr('cy', p[1]);
-                            g.select('text.isolines-label').attr('x', p[0] + 10).attr('y', p[1] - 10);
+                            // Show and update markers
+                            svg.selectAll('g.isoline-marker-group circle.click-marker').style('display', null).attr('cx', p[0]).attr('cy', p[1]);
+                            svg.selectAll('g.isoline-marker-group text.isolines-label').style('display', null).attr('x', p[0] + 10).attr('y', p[1] - 10);
+                            svg.select('g.isolines-group').style('display', null);
                         }
                     }
                 } catch (_) {
@@ -1009,20 +1183,21 @@ const K_MAG_MAP_APP = {
             const zoomed = (event: { transform: d3.ZoomTransform }) => {
                 this.currentZoomTransform = event.transform;
                 clippedGroup.attr('transform', event.transform.toString());
+                
+                const t = event.transform as any;
+                const proj = this.projection as any;
+                const apply = (pt: [number, number]) => [pt[0] * t.k + t.x, pt[1] * t.k + t.y];
+
                 // --- DYNAMICALLY Calculate visible geographic bounds for contour culling ---
-                const {k, x, y} = event.transform as any;
                 // Invert screen corners to get lon/lat bounds
-                const topLeft = (this.projection as any).invert([(0 - x) / k, (0 - y) / k]);
-                const bottomRight = (this.projection as any).invert([(mapWidth - x) / k, (mapHeight - y) / k]);
+                const topLeft = proj.invert([(0 - t.x) / t.k, (0 - t.y) / t.k]);
+                const bottomRight = proj.invert([(mapWidth - t.x) / t.k, (mapHeight - t.y) / t.k]);
                 this.currentViewportBounds = {
                     minLon: topLeft[0],
                     maxLon: bottomRight[0],
                     minLat: bottomRight[1],
                     maxLat: topLeft[1]
                 };
-                const t = event.transform as any;
-                const proj = this.projection as any;
-                const apply = (pt: [number, number]) => [pt[0] * t.k + t.x, pt[1] * t.k + t.y];
 
                 // Remove previous graticule labels and paths before redrawing
                 svg.selectAll('g.graticule-labels').remove();
@@ -1046,6 +1221,64 @@ const K_MAG_MAP_APP = {
                     }
                 });
 
+                // Update fixed markers and labels position on zoom
+                svg.selectAll('g.isoline-marker-group circle.click-marker').each(function() {
+                    const node = d3.select(this as any);
+                    const lon = +node.attr('data-lon');
+                    const lat = +node.attr('data-lat');
+                    const p = proj([lon, lat]);
+                    if (p) {
+                        const sp = apply(p as [number, number]);
+                        node.attr('cx', sp[0]).attr('cy', sp[1]);
+                    }
+                });
+                svg.selectAll('g.isoline-marker-group text.isolines-label').each(function() {
+                    const node = d3.select(this as any);
+                    const lon = +node.attr('data-lon');
+                    const lat = +node.attr('data-lat');
+                    const p = proj([lon, lat]);
+                    if (p) {
+                        const sp = apply(p as [number, number]);
+                        node.attr('x', sp[0] + 10).attr('y', sp[1] - 10);
+                    }
+                });
+
+                // Update airports position on zoom
+                svg.selectAll('g.airports-group circle.airport-dot').each(function() {
+                    const node = d3.select(this as any);
+                    const lon = +node.attr('data-lon');
+                    const lat = +node.attr('data-lat');
+                    const p = proj([lon, lat]);
+                    if (p) {
+                        const sp = apply(p as [number, number]);
+                        node.attr('cx', sp[0]).attr('cy', sp[1]);
+                    }
+                });
+                svg.selectAll('g.airports-group text.airport-label').each(function() {
+                    const node = d3.select(this as any);
+                    const lon = +node.attr('data-lon');
+                    const lat = +node.attr('data-lat');
+                    const p = proj([lon, lat]);
+                    if (p) {
+                        const sp = apply(p as [number, number]);
+                        node.attr('x', sp[0] + 5).attr('y', sp[1] - 5);
+                    }
+                });
+
+                // Update airport area circles on zoom
+                svg.selectAll('g.airports-area-group circle.airport-area').each(function() {
+                    const node = d3.select(this as any);
+                    const lon = +node.attr('data-lon');
+                    const lat = +node.attr('data-lat');
+                    if (isFinite(lon) && isFinite(lat)) {
+                        const p = proj([lon, lat]);
+                        if (p) {
+                            const sp = apply(p as [number, number]);
+                            node.attr('cx', sp[0]).attr('cy', sp[1]);
+                        }
+                    }
+                });
+
                 if (this.redrawTimeout) {
                     clearTimeout(this.redrawTimeout);
                 }
@@ -1053,19 +1286,14 @@ const K_MAG_MAP_APP = {
                 this.redrawTimeout = window.setTimeout(() => {
                     if (!this.lastFieldType) return;
                     const kNow = (event.transform as any).k;
-
-                    const oldOpts = this.getContourOptionsForZoom(this.lastFieldType, this.lastContourZoomLevel);
-                    const newOpts = this.getContourOptionsForZoom(this.lastFieldType, kNow);
-
-                    if (oldOpts.step !== newOpts.step) {
-                        this.REDRAW_CONTOURS();
-                        this.lastContourZoomLevel = kNow;
-                    }
+                    // Trigger redraw if zoom changed or just to refresh LOD
+                    this.REDRAW_CONTOURS();
+                    this.lastContourZoomLevel = kNow;
                 }, 250);
             };
 
             const zoomBehavior = (d3 as any).zoom()
-                .scaleExtent([1, 12])
+                .scaleExtent([1, 100])
                 .translateExtent(this.worldBounds as any)
                 .extent([[0, 0], [mapWidth, mapHeight]])
                 .wheelDelta((event: WheelEvent) => -event.deltaY * 0.002)
@@ -1242,22 +1470,48 @@ const K_MAG_MAP_APP = {
         if (!this.IS_POINT_IN_MAP(par_x, par_y)) return;
         try {
             const proj = this.projection as any;
-            // Account for current zoom/pan in planar (Mercator) mode
-            let localX = par_x;
-            let localY = par_y;
+            
+            // --- Airport Snapping ---
+            let targetCoords: [number, number] | null = null;
+            let finalX = par_x;
+            let finalY = par_y;
+
+            // Check if we are close to any airport dot on screen
+            const SNAP_RADIUS = 15;
+            for (const ap of this.AIRPORTS) {
+                const sp = this.LONLAT_TO_SVG_POINT(ap.lon, ap.lat);
+                if (sp) {
+                    const dist = Math.hypot(par_x - sp.x, par_y - sp.y);
+                    if (dist <= SNAP_RADIUS) {
+                        targetCoords = [ap.lon, ap.lat];
+                        finalX = sp.x;
+                        finalY = sp.y;
+                        break;
+                    }
+                }
+            }
+
+            // Account for current zoom/pan in planar (Mercator) mode if not snapped
+            let localX = finalX;
+            let localY = finalY;
             if (this.projectionType !== 'globe' && this.currentZoomTransform) {
                 const t: any = this.currentZoomTransform;
-                localX = (par_x - t.x) / t.k;
-                localY = (par_y - t.y) / t.k;
+                localX = (finalX - t.x) / t.k;
+                localY = (finalY - t.y) / t.k;
             }
-            const coords = proj.invert([localX, localY]);
-            if (!coords || coords.some(isNaN)) return;
+
+            if (!targetCoords) {
+                targetCoords = proj.invert([localX, localY]);
+            }
+
+            if (!targetCoords || targetCoords.some(isNaN)) return;
+            
             // Store local coordinates (for pinned marker positioning) and geographic coordinates
-            this.currentClickPoint = { x: localX, y: localY, lon: coords[0], lat: coords[1] };
-            const fieldData = this.GET_POINT_FIELD(coords);
+            this.currentClickPoint = { x: localX, y: localY, lon: targetCoords[0], lat: targetCoords[1] };
+            const fieldData = this.GET_POINT_FIELD(targetCoords);
             if (!fieldData) return;
-            this.SHOW_COORD_INFO(par_x, par_y, coords, fieldData);
-            this.DRAW_ISOLINES_FROM_POINT(coords, fieldData);
+            this.SHOW_COORD_INFO(finalX, finalY, targetCoords, fieldData);
+            this.DRAW_ISOLINES_FROM_POINT(targetCoords, fieldData);
         } catch (error) {
             console.error("Error handling map click:", error);
         }
@@ -1331,12 +1585,17 @@ const K_MAG_MAP_APP = {
         }
     },
 
-    DRAW_ISOLINES_FROM_POINT: function (par_coords: [number, number], fieldData: GEOMAG_FIELD_COMPONENTS): void {
+    DRAW_ISOLINES_FROM_POINT: function (par_coords: [number, number], fieldData: GEOMAG_FIELD_COMPONENTS, gridToUse?: GridData): void {
         if (!this.projection || !this.currentClickPoint) return;
-        if (!this.lastGridData) return; // need grid to build contour
+        const grid = gridToUse || this.lastGridData;
+        if (!grid) return;
 
-        const container = d3.select<SVGGElement, unknown>("#geomag-map-clipped-group");
+        const svg = d3.select("#geomag-map");
+        const clippedGroup = svg.select<SVGGElement>("#geomag-map-clipped-group");
+        const markerGroup = svg.select<SVGGElement>("g.isoline-marker-group");
+
         if (this.currentIsolines) this.currentIsolines.remove();
+        markerGroup.selectAll("*").remove();
 
         const fieldSelect = document.getElementById('fieldSelect') as HTMLSelectElement;
         const field = fieldSelect.value as FieldType;
@@ -1344,13 +1603,16 @@ const K_MAG_MAP_APP = {
         const currentValue = fieldData[key];
         const isDark = this.theme === 'dark';
 
-        const isoGeo = this.BUILD_SINGLE_CONTOUR_GEOJSON(this.lastGridData, currentValue);
-        this.currentIsolines = container.append("g").attr("class", "isolines-group");
+        const isoGeo = this.BUILD_SINGLE_CONTOUR_GEOJSON(grid, currentValue);
+        this.currentIsolines = clippedGroup.append("g").attr("class", "isolines-group");
 
-        this.currentIsolines.append("circle")
+        // Marker stays sharp outside clippedGroup
+        markerGroup.append("circle")
             .attr("class", "click-marker")
-            .attr("cx", this.currentClickPoint.x).attr("cy", this.currentClickPoint.y)
-            .attr("r", 4).attr("fill", "#ff3333").attr("stroke", "white").attr("stroke-width", 1);
+            .attr("data-lon", par_coords[0]).attr("data-lat", par_coords[1])
+            .attr("cx", this.LONLAT_TO_SVG_POINT(par_coords[0], par_coords[1])?.x || 0)
+            .attr("cy", this.LONLAT_TO_SVG_POINT(par_coords[0], par_coords[1])?.y || 0)
+            .attr("r", 6).attr("fill", "#ff3333").attr("stroke", "white").attr("stroke-width", 2);
 
         if (isoGeo) {
             const pathGenerator = d3.geoPath().projection(this.projection as any);
@@ -1360,14 +1622,20 @@ const K_MAG_MAP_APP = {
                 .attr("class", "isolines")
                 .style("fill", "none")
                 .style("stroke", field === 'totalfield' ? (isDark ? "#ff6666" : "#8B0000") : (currentValue === 0 ? "green" : currentValue > 0 ? "#C00000" : "#0000A0"))
-                .style("stroke-width", 2)
-                .style("stroke-dasharray", "4,3");
+                .style("stroke-width", this.isolineWidth * 1.5)
+                .style("stroke-dasharray", "4,3")
+                .style("vector-effect", "non-scaling-stroke");
         }
 
-        this.currentIsolines.append("text")
-            .attr("x", this.currentClickPoint.x + 10).attr("y", this.currentClickPoint.y - 10)
+        markerGroup.append("text")
             .attr("class", "isolines-label")
-            .style("font-size", "11px").style("font-family", "Arial, sans-serif").style("fill", isDark ? "#fff" : "#111")
+            .attr("data-lon", par_coords[0]).attr("data-lat", par_coords[1])
+            .attr("x", (this.LONLAT_TO_SVG_POINT(par_coords[0], par_coords[1])?.x || 0) + 10)
+            .attr("y", (this.LONLAT_TO_SVG_POINT(par_coords[0], par_coords[1])?.y || 0) - 10)
+            .style("font-size", "12px").style("font-family", "Arial, sans-serif")
+            .style("font-weight", "bold")
+            .style("fill", isDark ? "#fff" : "#111")
+            .style("paint-order", "stroke").style("stroke", isDark ? "#000" : "white").style("stroke-width", "3px")
             .text(`${currentValue.toFixed(field === 'totalfield' ? 0 : 1)}`);
     },
 
@@ -1486,9 +1754,11 @@ const K_MAG_MAP_APP = {
                     return (!start || !end || Math.abs(start[0] - end[0]) > 180) ? null : [start, end];
                 }).filter((d): d is [number, number][] => !!d);
                 const GEOJSON = { type: "MultiLineString", coordinates: coords } as any;
+                const isMajor = labelCondition(LEVEL, step, majorMultiplier);
                 CONTOUR_GROUP.append("path").datum(GEOJSON).attr("d", par_path_generator as any)
                     .style("fill", "none").style("stroke", colorFunc(LEVEL))
-                    .style("stroke-width", labelCondition(LEVEL, step, majorMultiplier) ? baseStrokeWidth * 1.5 : baseStrokeWidth);
+                    .style("stroke-width", isMajor ? this.isolineWidth * 1.5 : this.isolineWidth)
+                    .style("vector-effect", "non-scaling-stroke");
             }
         }
     },
@@ -1664,14 +1934,22 @@ const K_MAG_MAP_APP = {
         }
     },
 
-    GENERATE_GRID_DATA: function (par_common_args: CommonArgs, par_param_key: ParamKey): GridData {
+    GENERATE_GRID_DATA: function (par_common_args: CommonArgs, par_param_key: ParamKey, bounds?: { minLon: number, maxLon: number, minLat: number, maxLat: number }, customRes?: { lat: number, lon: number }): GridData {
         const { geomagInstance, epoch, altitudeKm } = par_common_args;
-        const { igdgc, gridResolutionLat, gridResolutionLon } = this.config;
-        const width = gridResolutionLon;
-        const height = gridResolutionLat;
+        const { igdgc } = this.config;
+        
+        let width = customRes ? customRes.lon : this.config.gridResolutionLon;
+        let height = customRes ? customRes.lat : this.config.gridResolutionLat;
+        
+        const minLon = bounds ? bounds.minLon : -180;
+        const maxLon = bounds ? bounds.maxLon : 180;
+        const minLat = bounds ? bounds.minLat : -90;
+        const maxLat = bounds ? bounds.maxLat : 90;
+
         const values = new Float32Array(width * height);
-        const latAbsArr = d3.range(0, 180, 180 / (height - 1)).concat(180);
-        const lonAbsArr = d3.range(0, 360, 360 / (width - 1)).concat(360);
+        
+        const lonStep = (maxLon - minLon) / (width - 1);
+        const latStep = (maxLat - minLat) / (height - 1);
 
         const pointGeomag = new CL_GEOMAG();
         pointGeomag.modelData = geomagInstance.modelData;
@@ -1690,9 +1968,9 @@ const K_MAG_MAP_APP = {
         });
 
         for (let loc_i = 0; loc_i < height; loc_i++) {
-            const lat = 90 - latAbsArr[loc_i];
+            const lat = maxLat - (loc_i * latStep);
             for (let loc_j = 0; loc_j < width; loc_j++) {
-                const lon = lonAbsArr[loc_j] - 180;
+                const lon = minLon + (loc_j * lonStep);
                 const field = pointGeomag.getFieldComponents(epoch, igdgc, altitudeKm, lat, lon);
                 let loc_value = field[par_param_key];
                 if (isNaN(loc_value)) loc_value = loc_j > 0 ? values[loc_i * width + (loc_j - 1)] : 0;
@@ -1859,16 +2137,18 @@ const K_MAG_MAP_APP = {
         return '#9B59B6';
     },
 
-    LONLAT_TO_SVG_POINT: function (lon: number, lat: number): { x: number, y: number } | null {
-        if (!this.projection) return null;
-        const p = (this.projection as any)([lon, lat]);
-        if (!p || !isFinite(p[0]) || !isFinite(p[1])) return null;
-        if (this.projectionType !== 'globe' && this.currentZoomTransform) {
-            const t: any = this.currentZoomTransform;
-            return { x: p[0] * t.k + t.x, y: p[1] * t.k + t.y };
-        }
-        return { x: p[0], y: p[1] };
-    },
+     LONLAT_TO_SVG_POINT: function (lon: number, lat: number): { x: number, y: number } | null {
+         if (!this.projection) return null;
+         const p = (this.projection as any)([lon, lat]);
+         if (!p || !isFinite(p[0]) || !isFinite(p[1])) return null;
+         // Only apply zoom transform for Mercator projection
+         if (this.projectionType === 'mercator' && this.currentZoomTransform) {
+             const t: any = this.currentZoomTransform;
+             return { x: p[0] * t.k + t.x, y: p[1] * t.k + t.y };
+         }
+         // Globe projection doesn't use zoom transform (uses orthographic projection directly)
+         return { x: p[0], y: p[1] };
+     },
 
     HANDLE_SEARCH_COORD: function (): void {
         const latEl = document.getElementById('searchLat') as HTMLInputElement | null;
@@ -1951,11 +2231,31 @@ const K_MAG_MAP_APP = {
             .attr('class', 'isolines')
             .style('fill', 'none')
             .style('stroke', this.VALUE_COLOR(paramKey, value))
-            .style('stroke-width', 2)
-            .style('stroke-dasharray', '4,3');
+            .style('stroke-width', this.isolineWidth * 1.5)
+            .style('stroke-dasharray', '4,3')
+            .style('vector-effect', 'non-scaling-stroke');
+        
         this.currentClickPoint = { x: p[0], y: p[1], lon: pickLon, lat: pickLat };
-        this.currentIsolines.append('circle').attr('class', 'click-marker').attr('cx', p[0]).attr('cy', p[1]).attr('r', 4).attr('fill', '#ff3333').attr('stroke', 'white').attr('stroke-width', 1);
-        this.currentIsolines.append('text').attr('x', p[0] + 10).attr('y', p[1] - 10).attr('class', 'isolines-label').style('font-size', '11px').style('font-family', 'Arial, sans-serif').style('fill', this.theme === 'dark' ? '#fff' : '#111').text(`${nameForLabel} = ${value} ${units}`);
+        
+        const svg = d3.select("#geomag-map");
+        const markerGroup = svg.select<SVGGElement>("g.isoline-marker-group");
+        markerGroup.selectAll("*").remove();
+
+        markerGroup.append('circle')
+            .attr('class', 'click-marker')
+            .attr("data-lon", pickLon).attr("data-lat", pickLat)
+            .attr('cx', p[0]).attr('cy', p[1]).attr('r', 6)
+            .attr('fill', '#ff3333').attr('stroke', 'white').attr('stroke-width', 2);
+
+        markerGroup.append('text')
+            .attr("data-lon", pickLon).attr("data-lat", pickLat)
+            .attr('x', p[0] + 10).attr('y', p[1] - 10)
+            .attr('class', 'isolines-label')
+            .style('font-size', '12px').style('font-family', 'Arial, sans-serif')
+            .style("font-weight", "bold")
+            .style('fill', this.theme === 'dark' ? '#fff' : '#111')
+            .style("paint-order", "stroke").style("stroke", this.theme === 'dark' ? "#000" : "white").style("stroke-width", "3px")
+            .text(`${nameForLabel} = ${value} ${units}`);
 
         const fieldData = this.GET_POINT_FIELD([pickLon, pickLat]);
         if (fieldData) this.SHOW_COORD_INFO(p[0], p[1], [pickLon, pickLat], fieldData);
