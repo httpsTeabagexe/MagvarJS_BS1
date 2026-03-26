@@ -83,6 +83,17 @@ h1 {
     cursor: help;
 }
 
+.toggle-group {
+    display: flex;
+    gap: 8px;
+}
+
+.toggle-group button {
+    flex: 1;
+    font-size: 0.85em;
+    padding: 8px 12px;
+}
+
 .controls-form input[type="number"], .controls-form select {
     padding: 12px;
     background-color: #2a2a2a;

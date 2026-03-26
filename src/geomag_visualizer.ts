@@ -191,8 +191,10 @@ const K_MAG_MAP_APP = {
                         .style('gap', '4px')
                         .html(`
                                 <label style="font-family:Arial, sans-serif; font-size:12px;">${this.T('proj')}: <select id="projectionSelect"><option value="mercator">${this.T('mercator')}</option><option value="globe">${this.T('globe')}</option></select></label>
-                                <label style="font-family:Arial, sans-serif; font-size:12px;">${this.T('theme')}: <select id="themeSelect"><option value="dark">${this.T('dark')}</option><option value="light">${this.T('light')}</option></select></label>
-                                <label style="font-family:Arial, sans-serif; font-size:12px;">${this.T('lang')}: <select id="langSelect"><option value="en">English</option><option value="ru">Русский</option></select></label>
+                                <div style="display:flex; gap:4px;">
+                                    <button type="button" id="themeToggleButton" style="font-size:10px; flex:1;">${this.T('theme')}: ${this.T(this.theme)}</button>
+                                    <button type="button" id="langToggleButton" style="font-size:10px; flex:1;">${this.T('lang')}: ${this.lang.toUpperCase()}</button>
+                                </div>
                             `);
                 }
 
@@ -238,11 +240,21 @@ const K_MAG_MAP_APP = {
         const projectionSelect = document.getElementById('projectionSelect') as HTMLSelectElement | null;
         const themeSelect = document.getElementById('themeSelect') as HTMLSelectElement | null;
         const langSelect = document.getElementById('langSelect') as HTMLSelectElement | null;
+        const themeToggleButton = document.getElementById('themeToggleButton') as HTMLButtonElement | null;
+        const langToggleButton = document.getElementById('langToggleButton') as HTMLButtonElement | null;
 
         // Update static button labels from translations
-        if (renderButton) renderButton.textContent = this.T('btn_render');
-        if (smoothingButton) smoothingButton.textContent = this.T('btn_smoothing');
-        if (uncertaintyButton) uncertaintyButton.textContent = this.T('btn_uncertainty');
+        const updateTogglesLabels = () => {
+            if (renderButton) renderButton.textContent = this.T('btn_render');
+            if (smoothingButton) smoothingButton.textContent = this.T('btn_smoothing');
+            if (uncertaintyButton) uncertaintyButton.textContent = this.T('btn_uncertainty');
+            if (themeToggleButton) themeToggleButton.textContent = `${this.T('theme')}: ${this.T(this.theme)}`;
+            if (langToggleButton) langToggleButton.textContent = `${this.T('lang')}: ${this.lang.toUpperCase()}`;
+            // Update body class for potential CSS-only theme logic
+            document.body.className = `theme-${this.theme} lang-${this.lang}`;
+        };
+
+        updateTogglesLabels();
 
         renderButton.addEventListener('click', () => this.HANDLE_RENDER_CLICK());
 
@@ -254,10 +266,41 @@ const K_MAG_MAP_APP = {
             });
         }
 
+        if (themeToggleButton) {
+            themeToggleButton.addEventListener('click', () => {
+                this.theme = (this.theme === 'dark' ? 'light' : 'dark');
+                updateTogglesLabels();
+                this.HANDLE_RENDER_CLICK();
+            });
+        }
+
+        if (langToggleButton) {
+            langToggleButton.addEventListener('click', () => {
+                this.lang = (this.lang === 'en' ? 'ru' : 'en');
+                updateTogglesLabels();
+                // Re-draw floating controls to update labels (if they exist)
+                const controls = d3.select('#map-controls-floating');
+                if (!controls.empty()) {
+                    controls.html(`
+                            <label style="font-family:Arial, sans-serif; font-size:12px;">${this.T('proj')}: <select id="projectionSelect"><option value="mercator">${this.T('mercator')}</option><option value="globe">${this.T('globe')}</option></select></label>
+                            <div style="display:flex; gap:4px;">
+                                <button type="button" id="themeToggleButton" style="font-size:10px; flex:1;">${this.T('theme')}: ${this.T(this.theme)}</button>
+                                <button type="button" id="langToggleButton" style="font-size:10px; flex:1;">${this.T('lang')}: ${this.lang.toUpperCase()}</button>
+                            </div>
+                        `);
+                    // Re-bind listeners for the newly created elements
+                    this.SETUP_UI_LISTENERS();
+                }
+                this.HANDLE_RENDER_CLICK();
+            });
+        }
+
+        // Keep legacy select handlers if they exist (unlikely with index.html change but good for robustness)
         if (themeSelect) {
             themeSelect.value = this.theme;
             themeSelect.addEventListener('change', () => {
                 this.theme = themeSelect.value as 'dark' | 'light';
+                updateTogglesLabels();
                 this.HANDLE_RENDER_CLICK();
             });
         }
@@ -266,17 +309,7 @@ const K_MAG_MAP_APP = {
             langSelect.value = this.lang;
             langSelect.addEventListener('change', () => {
                 this.lang = langSelect.value as 'en' | 'ru';
-                // Re-draw floating controls to update labels
-                const controls = d3.select('#map-controls-floating');
-                if (!controls.empty()) {
-                    controls.html(`
-                            <label style="font-family:Arial, sans-serif; font-size:12px;">${this.T('proj')}: <select id="projectionSelect"><option value="mercator">${this.T('mercator')}</option><option value="globe">${this.T('globe')}</option></select></label>
-                            <label style="font-family:Arial, sans-serif; font-size:12px;">${this.T('theme')}: <select id="themeSelect"><option value="dark">${this.T('dark')}</option><option value="light">${this.T('light')}</option></select></label>
-                            <label style="font-family:Arial, sans-serif; font-size:12px;">${this.T('lang')}: <select id="langSelect"><option value="en">English</option><option value="ru">Русский</option></select></label>
-                        `);
-                    // Re-bind listeners for the newly created elements
-                    this.SETUP_UI_LISTENERS();
-                }
+                updateTogglesLabels();
                 this.HANDLE_RENDER_CLICK();
             });
         }
